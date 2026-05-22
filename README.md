@@ -51,23 +51,24 @@ vaux/
 ## Socket.io event contract
 
 | Event                  | Direction       | Payload                                                     |
-| ---------------------- | --------------- | ----------------------------------------------------------- | ------- |
-| `room:join`            | client → server | `{ roomId, userId, username }`                              |
-| `room:joined`          | server → client | `{ room, members[], queue[], playbackState }`               |
-| `room:member_joined`   | server → client | `{ userId, username, role }`                                |
-| `room:member_left`     | server → client | `{ userId }`                                                |
-| `queue:add`            | client → server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }` |
-| `queue:updated`        | server → client | `{ queue[] }` — full queue, sorted by votes                 |
-| `queue:vote`           | client → server | `{ roomId, queueItemId, value }` — `1` or `-1`              |
-| `playback:play`        | client → server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:pause`       | client → server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:seek`        | client → server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:state`       | server → client | `{ videoId, positionSeconds, isPlaying, updatedAt }`        |
-| `playback:track_ended` | server → client | `{ nextItem                                                 | null }` |
-| `chat:send`            | client → server | `{ roomId, userId, username, text }`                        |
-| `chat:message`         | server → client | `{ userId, username, text, timestamp }`                     |
-| `reaction:send`        | client → server | `{ roomId, emoji }`                                         |
-| `reaction:broadcast`   | server → client | `{ userId, emoji }`                                         |
+| ---------------------- | --------------- | ----------------------------------------------------------- |
+| `room:join`            | Client → Server | `{ roomId, userId, username }`                              |
+| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState }`               |
+| `room:member_joined`   | Server → Client | `{ userId, username, role }`                                |
+| `room:member_left`     | Server → Client | `{ userId }`                                                |
+| `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }` |
+| `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                 |
+| `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`              |
+| `playback:play`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
+| `playback:pause`       | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
+| `playback:seek`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
+| `playback:state`       | Server → Client | `{ videoId, positionSeconds, isPlaying, updatedAt }`        |
+| `playback:track_ended` | Server → Client | `{ nextItem \| null }`                                      |
+| `chat:send`            | Client → Server | `{ roomId, userId, username, text }`                        |
+| `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                     |
+| `reaction:send`        | Client → Server | `{ roomId, emoji }`                                         |
+| `reaction:broadcast`   | Server → Client | `{ userId, emoji }`                                         |
+|  |
 
 ### Sync formula
 
