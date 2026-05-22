@@ -50,8 +50,6 @@ vaux/
 
 ## Socket.io event contract
 
-Both clients speak the same events. This is the source of truth.
-
 | Event                  | Direction       | Payload                                                     |
 | ---------------------- | --------------- | ----------------------------------------------------------- | ------- |
 | `room:join`            | client → server | `{ roomId, userId, username }`                              |
@@ -84,7 +82,6 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 ## Tech stack
 
-
 | Layer        | Technology                                                         |
 | ------------ | ------------------------------------------------------------------ |
 | Web frontend | Next.js 16, React, Tailwind CSS, TypeScript                        |
@@ -93,7 +90,6 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 | Database     | PostgreSQL                                                         |
 | Music source | YouTube Data API v3 (search), YouTube IFrame Player API (playback) |
 | Hosting      | Vercel (web), Render (server)                                      |
-
 
 ---
 
@@ -165,7 +161,6 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 
 ## Database schema
 
-
 | Table            | Purpose                               |
 | ---------------- | ------------------------------------- |
 | `users`          | Registered users                      |
@@ -175,18 +170,15 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 | `votes`          | Up/down votes per user per queue item |
 | `playback_state` | Current track + position per room     |
 
-
 ---
 
 ## Roles
-
 
 | Role     | Can do                                              |
 | -------- | --------------------------------------------------- |
 | Host     | Everything — play, pause, seek, skip, remove tracks |
 | DJ       | Add tracks, vote, control playback                  |
 | Listener | Add tracks, vote, chat                              |
-
 
 ---
 
