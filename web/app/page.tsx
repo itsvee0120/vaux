@@ -39,6 +39,8 @@ function decodeHTML(str: string) {
   return txt.value;
 }
 
+// ── Home ──
+// Main client: lobby join flow, then room UI with synced player, queue, and chat.
 export default function Home() {
   const [screen, setScreen] = useState<"lobby" | "room">("lobby");
   const [roomId, setRoomId] = useState("");
@@ -56,6 +58,8 @@ export default function Home() {
   const roomIdRef = useRef(roomId);
   roomIdRef.current = roomId;
 
+  // ── socket listeners ──
+  // Subscribes once on mount; room:joined switches to room screen with playback snapshot.
   useEffect(() => {
     const socket = getSocket();
     socket.on("connect", () => {});
@@ -128,6 +132,8 @@ export default function Home() {
     getSocket().emit("playback:ended", { roomId: roomIdRef.current });
   }, []);
 
+  // ── joinRoom ──
+  // Connects socket and joins room; server assigns host to first member.
   function joinRoom() {
     if (!roomId.trim() || !username.trim()) return;
     const socket = getSocket();
@@ -135,6 +141,8 @@ export default function Home() {
     socket.emit("room:join", { roomId, userId: username, username });
   }
 
+  // ── searchYouTube ──
+  // Proxied search via server /youtube/search (keeps API key off the client).
   async function searchYouTube() {
     if (!searchQuery.trim()) return;
     setSearching(true);
@@ -159,6 +167,8 @@ export default function Home() {
     socket.emit("queue:vote", { roomId, itemId, value });
   }
 
+  // ── playTrack ──
+  // Host-only: removes item from queue server-side and broadcasts playback:state.
   function playTrack(track: Track) {
     if (!isHost) return;
     getSocket().emit("playback:play_track", { roomId, itemId: track.id });

@@ -61,6 +61,8 @@ app.get("/youtube/search", async (req, res) => {
 // ── in-memory room state (db comes later) ──
 const rooms = {};
 
+// ── getRoom ──
+// Lazily creates a room with empty queue + playback state.
 function getRoom(roomId) {
   if (!rooms[roomId]) {
     rooms[roomId] = {
@@ -100,6 +102,8 @@ function broadcastPlaybackState(roomId) {
   io.to(roomId).emit("playback:state", room.playbackState);
 }
 
+// ── setPlaybackFromTrack ──
+// Starts a queue item from t=0, playing; used when host picks a track or auto-advance fires.
 function setPlaybackFromTrack(room, track) {
   room.playbackState = {
     videoId: track.videoId,
@@ -113,6 +117,8 @@ function setPlaybackFromTrack(room, track) {
   };
 }
 
+// ── advanceToNextTrack ──
+// Called when the current video ends. Plays the next queued item or clears playback.
 function advanceToNextTrack(room, roomId) {
   if (room.queue.length === 0) {
     room.playbackState = emptyPlaybackState();
@@ -127,7 +133,8 @@ function advanceToNextTrack(room, roomId) {
   broadcastPlaybackState(roomId);
 }
 
-// ── socket.io ──
+// ── socket.io connection ──
+// All real-time room events: join, queue, chat, and host-only playback control.
 io.on("connection", (socket) => {
   console.log(`[socket] connected: ${socket.id}`);
 
@@ -187,6 +194,7 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("chat:message", message);
   });
 
+  // ── playback handlers (host only) ──
   socket.on("playback:play_track", ({ roomId, itemId }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;

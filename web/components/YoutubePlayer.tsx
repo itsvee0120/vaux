@@ -45,6 +45,8 @@ declare global {
 const API_SRC = "https://www.youtube.com/iframe_api";
 let apiLoading: Promise<void> | null = null;
 
+// ── loadYouTubeApi ──
+// Injects the YouTube IFrame API script once; resolves when YT.Player is ready.
 function loadYouTubeApi(): Promise<void> {
   if (window.YT?.Player) return Promise.resolve();
   if (apiLoading) return apiLoading;
@@ -74,6 +76,9 @@ type Props = {
   onEnded: () => void;
 };
 
+// ── YoutubePlayer ──
+// Wraps YT.Player for synced listening. Listeners apply remote playback:state;
+// the host's play/pause/ended events are emitted back to the server.
 export function YoutubePlayer({
   playback,
   isHost,
@@ -92,6 +97,9 @@ export function YoutubePlayer({
   const playbackRef = useRef(playback);
   playbackRef.current = playback;
 
+  // ── applyPlayback ──
+  // Seeks or loads the video to match server state. Sets applyingRemote so host
+  // onStateChange handlers do not echo control events back to the server.
   const applyPlayback = useCallback((state: PlaybackState) => {
     const player = playerRef.current;
     if (!player || !readyRef.current || !state.videoId) return;
@@ -115,6 +123,8 @@ export function YoutubePlayer({
     }, 500);
   }, []);
 
+  // ── player init ──
+  // Creates YT.Player on mount; host state changes wire play/pause/ended to parent.
   useEffect(() => {
     let cancelled = false;
 
@@ -158,6 +168,8 @@ export function YoutubePlayer({
     };
   }, [containerId, isHost, onPlay, onPause, onEnded, applyPlayback]);
 
+  // ── playback sync ──
+  // Re-applies remote state whenever the server broadcasts a new updatedAt.
   useEffect(() => {
     if (!playback.videoId) return;
     if (playback.updatedAt === lastAppliedAt.current) return;

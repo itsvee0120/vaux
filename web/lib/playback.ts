@@ -9,7 +9,9 @@ export type PlaybackState = {
   updatedAt: number;
 };
 
-/** README sync formula — extrapolate position at receive time */
+// ── getSyncedPosition ──
+// README sync formula: extrapolate playback position from last server snapshot.
+// Paused rooms return positionSeconds as-is (no drift while stopped).
 export function getSyncedPosition(state: PlaybackState): number {
   if (!state.isPlaying) return state.positionSeconds;
   return (
