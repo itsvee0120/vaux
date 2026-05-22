@@ -53,16 +53,18 @@ vaux/
 | Event                  | Direction       | Payload                                                     |
 | ---------------------- | --------------- | ----------------------------------------------------------- |
 | `room:join`            | Client → Server | `{ roomId, userId, username }`                              |
-| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState }`               |
+| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState, role }`         |
 | `room:member_joined`   | Server → Client | `{ userId, username, role }`                                |
 | `room:member_left`     | Server → Client | `{ userId }`                                                |
 | `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }` |
 | `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                 |
 | `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`              |
+| `playback:play_track`  | Client → Server | `{ roomId, itemId }` — host only; starts queue item         |
 | `playback:play`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
 | `playback:pause`       | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
 | `playback:seek`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:state`       | Server → Client | `{ videoId, positionSeconds, isPlaying, updatedAt }`        |
+| `playback:state`       | Server → Client | `{ videoId, positionSeconds, isPlaying, updatedAt, ...track }` |
+| `playback:ended`       | Client → Server | `{ roomId }` — host only; auto-plays next queue item          |
 | `playback:track_ended` | Server → Client | `{ nextItem \| null }`                                      |
 | `chat:send`            | Client → Server | `{ roomId, userId, username, text }`                        |
 | `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                     |
