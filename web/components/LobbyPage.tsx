@@ -6,6 +6,8 @@ import { getSyncedPosition } from "@/lib/playback";
 import { decodeHTML } from "@/lib/decode-html";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { YoutubePlayer } from "@/components/YoutubePlayer";
+import Image from "next/image";
+import { CirclePlus, Play, SendHorizontal, Loader2 } from "lucide-react";
 
 type LobbyPageProps = {
   roomId: string;
@@ -81,6 +83,7 @@ export function LobbyPage({
         </span>
       </div>
 
+      {/* Video Components Start Here */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
           <div className="overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
@@ -175,6 +178,7 @@ export function LobbyPage({
             )}
           </div>
 
+          {/* Search/ Result & add Tracks Components Start Here */}
           <div>
             <div className="mb-3 flex gap-2">
               <input
@@ -185,10 +189,18 @@ export function LobbyPage({
                 onKeyDown={(e) => e.key === "Enter" && onSearch()}
               />
               <button
-                className="rounded bg-zinc-800 px-4 py-2 text-sm hover:bg-vaux-green-dark cursor-pointer transition-colors"
                 onClick={onSearch}
+                disabled={searching}
+                className="flex items-center justify-center gap-2 rounded bg-zinc-800 px-4 py-2 text-sm hover:bg-vaux-green-dark cursor-pointer transition-colors disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
               >
-                {searching ? "..." : "search"}
+                {searching ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Searching
+                  </>
+                ) : (
+                  "Search"
+                )}
               </button>
             </div>
 
@@ -197,22 +209,25 @@ export function LobbyPage({
                 {searchResults.map((r) => (
                   <div
                     key={r.videoId}
-                    className="flex cursor-pointer items-center gap-3 rounded-lg border border-vaux-green-dark/40 bg-vaux-bg-dark p-2 transition-colors hover:border-vaux-green"
+                    className="flex cursor-pointer items-center gap-3 rounded-lg border border-vaux-green hover:bg-vaux-bg-dark p-2 transition-colors hover:border-vaux-green"
                     onClick={() => onAddToQueue(r)}
                   >
-                    <img
-                      src={r.thumbnail}
-                      alt=""
-                      className="h-14 w-20 rounded object-cover"
-                    />
+                    <div className="relative h-14 w-20 shrink-0">
+                      <Image
+                        src={r.thumbnail}
+                        alt=""
+                        fill
+                        className="rounded object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm text-vaux-light">
                         {decodeHTML(r.title)}
                       </p>
                       <p className="text-xs text-vaux-green">{r.channel}</p>
                     </div>
-                    <span className="shrink-0 text-xs text-zinc-500">
-                      click to add
+                    <span className="shrink-0 cursor-pointer rounded-full p-1 text-vaux-green-dark hover:text-vaux-green transition-colors inline-flex items-center justify-center">
+                      <CirclePlus size={25} />
                     </span>
                   </div>
                 ))}
@@ -221,9 +236,10 @@ export function LobbyPage({
           </div>
         </div>
 
+        {/* Queue Components Start Here */}
         <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:border-t-0 lg:border-l">
           <div className="flex-1 overflow-y-auto p-3">
-            <p className="mb-2 text-xs uppercase tracking-widest text-vaux-light">
+            <p className="mb-2 text-xs uppercase tracking-widest text-vaux-green">
               queue
             </p>
             {queue.length === 0 ? (
@@ -237,23 +253,26 @@ export function LobbyPage({
                     key={track.id}
                     className="flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-900 p-2"
                   >
-                    <img
-                      src={track.thumbnail}
-                      alt=""
-                      className="h-9 w-12 rounded object-cover"
-                    />
+                    <div className="relative h-9 w-12">
+                      <Image
+                        src={track.thumbnail}
+                        alt=""
+                        fill
+                        className="rounded object-cover"
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs text-white">
+                      <p className="truncate text-xs text-vaux-light ">
                         {decodeHTML(track.title)}
                       </p>
-                      <p className="truncate text-xs text-zinc-600">
+                      <p className="truncate text-xs text-vaux-green">
                         {track.addedBy}
                       </p>
                     </div>
                     <div className="flex flex-col items-center gap-1">
                       <button
                         onClick={() => onVote(track.id, 1)}
-                        className="text-xs text-zinc-500 hover:text-violet-400"
+                        className="text-xs text-zinc-500 hover:text-vaux-green cursor-pointer"
                       >
                         ▲
                       </button>
@@ -268,7 +287,7 @@ export function LobbyPage({
                             ? "You need at least 1 vote to downvote a track"
                             : undefined
                         }
-                        className="text-xs text-zinc-500 hover:text-red-400"
+                        className="text-xs text-zinc-500 hover:text-[#C44545] cursor-pointer"
                       >
                         ▼
                       </button>
@@ -276,10 +295,10 @@ export function LobbyPage({
                     {isHost && (
                       <button
                         onClick={() => onPlayTrack(track)}
-                        className="ml-1 text-xs text-violet-500 hover:text-violet-300"
+                        className="ml-1 cursor-pointer text-xs font-bold text-vaux-green-dark transition-transform hover:scale-115 hover:text-[#A2CB8B]"
                         title="Play now (host)"
                       >
-                        ▶
+                        <Play size={16} />
                       </button>
                     )}
                   </div>
@@ -288,8 +307,9 @@ export function LobbyPage({
             )}
           </div>
 
-          <div className="flex h-56 flex-col border-t border-zinc-800">
-            <p className="mb-1 px-3 pt-2 text-xs uppercase tracking-widest text-zinc-500">
+          {/* Chat Components Start Here */}
+          <div className="flex h-60 flex-col border-t border-vaux-green-dark">
+            <p className="mb-1 px-3 pt-2 text-xs uppercase tracking-widest text-vaux-green">
               chat
             </p>
             <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
@@ -299,8 +319,8 @@ export function LobbyPage({
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (
                     <>
-                      <span className="text-violet-400">{m.username}: </span>
-                      <span className="text-zinc-300">{m.text}</span>
+                      <span className="text-vaux-green">{m.username}: </span>
+                      <span className="text-vaux-light">{m.text}</span>
                     </>
                   )}
                 </div>
@@ -309,17 +329,17 @@ export function LobbyPage({
             </div>
             <div className="flex gap-2 p-2">
               <input
-                className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs focus:border-violet-500 focus:outline-none"
+                className="flex-1 rounded border border-vaux-green-dark bg-zinc-900 px-2 py-1 text-xs focus:border-vaux-light focus:outline-none"
                 placeholder="say something..."
                 value={chatInput}
                 onChange={(e) => onChatInputChange(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSendChat()}
               />
               <button
-                className="rounded bg-violet-600 px-3 py-1 text-xs hover:bg-violet-500"
+                className="rounded bg-vaux-green-dark px-3 py-2 text-xs hover:bg-vaux-green cursor-pointer transition-colors"
                 onClick={onSendChat}
               >
-                →
+                <SendHorizontal size={20} />
               </button>
             </div>
           </div>
