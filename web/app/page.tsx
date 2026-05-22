@@ -160,8 +160,9 @@ export default function Home() {
   }
 
   function vote(itemId: string, value: 1 | -1) {
-    const socket = getSocket();
-    socket.emit("queue:vote", { roomId, itemId, value });
+    const track = queue.find((t) => t.id === itemId);
+    if (value === -1 && (track?.votes ?? 0) < 1) return;
+    getSocket().emit("queue:vote", { roomId, itemId, value });
   }
 
   // ── playTrack ──
@@ -390,6 +391,12 @@ export default function Home() {
                       </span>
                       <button
                         onClick={() => vote(track.id, -1)}
+                        disabled={track.votes < 1}
+                        title={
+                          track.votes < 1
+                            ? "You need at least 1 vote to downvote a track"
+                            : undefined
+                        }
                         className="text-zinc-500 hover:text-red-400 text-xs"
                       >
                         ▼
