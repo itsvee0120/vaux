@@ -3,11 +3,19 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  /* vaux palette */
+  --vaux-bg: #1b211a;
+  --vaux-green: #8bae66;
+  --vaux-green-dark: #628141;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-vaux-bg: var(--vaux-bg);
+  --color-vaux-green: var(--vaux-green);
+  --color-vaux-green-dark: var(--vaux-green-dark);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }

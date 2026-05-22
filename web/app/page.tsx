@@ -195,28 +195,28 @@ export default function Home() {
 
   if (screen === "lobby") {
     return (
-      <main className="min-h-screen w-full min-w-[17rem] bg-black text-white flex items-center justify-center font-mono p-4 sm:p-8 box-border overflow-x-auto">
+      <main className="min-h-screen w-full min-w-[17rem] bg-vaux-bg text-white flex items-center justify-center font-mono p-4 sm:p-8 box-border overflow-x-auto">
         <div className="flex flex-col gap-4 w-full max-w-sm min-w-0">
-          <h1 className="text-3xl font-bold text-violet-400 mb-2">vaux</h1>
+          <h1 className="text-8xl font-bold text-vaux-green mb-2">VAUX</h1>
           <p className="text-zinc-500 text-sm -mt-2">
             listen together, in sync
           </p>
           <input
-            className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl px-3 py-3 text-sm focus:outline-none focus:border-vaux-green"
             placeholder="room name (e.g. indie-night)"
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && joinRoom()}
           />
           <input
-            className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-violet-500"
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl px-3 py-3 text-sm focus:outline-none focus:border-vaux-green"
             placeholder="your name"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && joinRoom()}
           />
           <button
-            className="bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all rounded px-4 py-2 text-sm font-bold"
+            className="bg-vaux-green-dark hover:bg-vaux-green cursor-pointer active:scale-95 transition-all rounded-2xl px-4 py-2.5 text-sm font-bold"
             onClick={joinRoom}
           >
             join room →
