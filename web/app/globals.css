@@ -6,6 +6,7 @@
 
   /* vaux palette */
   --vaux-bg: #1b211a;
+  --vaux-bg-dark: #121612;
   --vaux-green: #8bae66;
   --vaux-green-dark: #628141;
 }
@@ -14,6 +15,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-vaux-bg: var(--vaux-bg);
+  --color-vaux-bg-dark: var(--vaux-bg-dark);
   --color-vaux-green: var(--vaux-green);
   --color-vaux-green-dark: var(--vaux-green-dark);
   --font-sans: var(--font-geist-sans);
