@@ -68,7 +68,7 @@ vaux/
 | `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                     |
 | `reaction:send`        | Client → Server | `{ roomId, emoji }`                                         |
 | `reaction:broadcast`   | Server → Client | `{ userId, emoji }`                                         |
-|  |
+|                        |
 
 ### Sync formula
 
@@ -105,7 +105,7 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 ### 1. Clone the repo
 
 ```bash
-git clone https://github.com/yourusername/vaux.git
+git clone https://github.com/itsvee0120/vaux.git
 cd vaux
 ```
 
