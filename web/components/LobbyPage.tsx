@@ -72,18 +72,18 @@ export function LobbyPage({
 
   return (
     <main className="flex min-h-dvh w-full flex-col bg-black font-mono text-white">
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-6 py-3">
-        <span className="text-lg font-bold text-violet-400">vaux</span>
+      <div className="flex items-center gap-3 border-b border-vaux-green px-6 py-3">
+        <span className="text-lg font-bold text-vaux-green">vaux</span>
         <span className="text-zinc-600">/</span>
-        <span className="text-sm text-zinc-300">{roomId}</span>
-        <span className="ml-auto text-xs text-zinc-600">
+        <span className="text-sm text-vaux-green-dark">{roomId}</span>
+        <span className="ml-auto text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
         <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-          <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
+          <div className="overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
             {playback.videoId ? (
               <>
                 <YoutubePlayer
@@ -93,16 +93,18 @@ export function LobbyPage({
                   onPause={onPause}
                   onEnded={onEnded}
                 />
-                <div className="border-t border-zinc-800 px-4 py-3">
-                  <p className="truncate text-sm font-bold text-white">
+                <div className="border-t border-vaux-green-dark px-4 py-3">
+                  <p className="truncate text-sm font-bold text-vaux-light">
                     {decodeHTML(nowPlaying!.title)}
                   </p>
-                  <p className="text-xs text-zinc-500">{nowPlaying!.channel}</p>
+                  <p className="text-xs text-vaux-green">
+                    {nowPlaying!.channel}
+                  </p>
                   {isHost && (
                     <div className="mt-3 flex items-center gap-2">
                       <button
                         type="button"
-                        className="rounded bg-zinc-800 px-2 py-1 text-xs hover:bg-zinc-700"
+                        className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
                         onClick={() =>
                           playback.isPlaying
                             ? onPause(syncedPosition)
@@ -117,7 +119,32 @@ export function LobbyPage({
                         max={600}
                         step={0.5}
                         value={seekValue}
-                        className="flex-1 accent-violet-500"
+                        className="flex-1 rounded-full h-1 appearance-none transition-all outline-none cursor-pointer focus:outline-none
+                          [&::-webkit-slider-runnable-track]:bg-vaux-light/20
+                          [&::-webkit-slider-runnable-track]:rounded-full
+                          [&::-webkit-slider-runnable-track]:cursor-pointer
+                          [&::-webkit-slider-runnable-track]:transition-all
+                          [&::-webkit-slider-runnable-track]:appearance-none
+                          [&::-webkit-slider-runnable-track]:border-1
+                          [&::-webkit-slider-runnable-track]:border-vaux-green
+                          [&::-webkit-slider-thumb]:appearance-none 
+                          [&::-webkit-slider-thumb]:w-4
+                          [&::-webkit-slider-thumb]:h-4
+                          [&::-webkit-slider-thumb]:bg-vaux-bg-dark
+                          [&::-webkit-slider-thumb]:rounded-full
+                          [&::-webkit-slider-thumb]:shadow-lg
+                          [&::-webkit-slider-thumb]:transition-all
+                          [&::-webkit-slider-thumb]:border-2
+                          [&::-webkit-slider-thumb]:border-vaux-green-dark 
+                          [&::-webkit-slider-thumb]:hover:scale-110
+                          [&::-webkit-slider-thumb]:active:scale-100
+                          [&::-moz-range-thumb]:appearance-none
+                          [&::-moz-range-thumb]:w-5
+                          [&::-moz-range-thumb]:h-5
+                          [&::-moz-range-thumb]:bg-vaux-green
+                          [&::-moz-range-thumb]:rounded-full
+                          [&::-moz-range-thumb]:border-2
+                          [&::-moz-range-thumb]:border-vaux-green"
                         onPointerDown={() => {
                           setIsSeeking(true);
                           setSeekUi(syncedPosition);
@@ -128,7 +155,7 @@ export function LobbyPage({
                           setIsSeeking(false);
                         }}
                       />
-                      <span className="w-10 text-right text-xs tabular-nums text-zinc-500">
+                      <span className="w-10 text-right text-xs tabular-nums text-vaux-light">
                         {Math.floor(seekValue)}s
                       </span>
                     </div>
@@ -151,14 +178,14 @@ export function LobbyPage({
           <div>
             <div className="mb-3 flex gap-2">
               <input
-                className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm focus:border-violet-500 focus:outline-none"
+                className="flex-1 rounded border border-vaux-green-dark/40 bg-zinc-900 px-3 py-2 text-sm focus:border-vaux-green focus:outline-none"
                 placeholder="search youtube..."
                 value={searchQuery}
                 onChange={(e) => onSearchQueryChange(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSearch()}
               />
               <button
-                className="rounded bg-zinc-800 px-4 py-2 text-sm hover:bg-zinc-700"
+                className="rounded bg-zinc-800 px-4 py-2 text-sm hover:bg-vaux-green-dark cursor-pointer transition-colors"
                 onClick={onSearch}
               >
                 {searching ? "..." : "search"}
@@ -170,7 +197,7 @@ export function LobbyPage({
                 {searchResults.map((r) => (
                   <div
                     key={r.videoId}
-                    className="flex cursor-pointer items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-2 transition-colors hover:border-violet-600"
+                    className="flex cursor-pointer items-center gap-3 rounded-lg border border-vaux-green-dark/40 bg-vaux-bg-dark p-2 transition-colors hover:border-vaux-green"
                     onClick={() => onAddToQueue(r)}
                   >
                     <img
@@ -179,13 +206,13 @@ export function LobbyPage({
                       className="h-14 w-20 rounded object-cover"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm text-white">
+                      <p className="truncate text-sm text-vaux-light">
                         {decodeHTML(r.title)}
                       </p>
-                      <p className="text-xs text-zinc-500">{r.channel}</p>
+                      <p className="text-xs text-vaux-green">{r.channel}</p>
                     </div>
-                    <span className="shrink-0 text-xs text-violet-400">
-                      + add
+                    <span className="shrink-0 text-xs text-zinc-500">
+                      click to add
                     </span>
                   </div>
                 ))}
@@ -194,9 +221,9 @@ export function LobbyPage({
           </div>
         </div>
 
-        <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-zinc-800 lg:w-80 lg:border-t-0 lg:border-l">
+        <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:border-t-0 lg:border-l">
           <div className="flex-1 overflow-y-auto p-3">
-            <p className="mb-2 text-xs uppercase tracking-widest text-zinc-500">
+            <p className="mb-2 text-xs uppercase tracking-widest text-vaux-light">
               queue
             </p>
             {queue.length === 0 ? (

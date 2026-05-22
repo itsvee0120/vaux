@@ -28,7 +28,7 @@ function CornerHand({
   );
 }
 
-export function LobbyBackground() {
+export function LoginBackground() {
   return (
     <div
       aria-hidden

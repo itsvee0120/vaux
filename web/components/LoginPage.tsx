@@ -1,4 +1,4 @@
-import { LobbyBackground } from "@/components/LobbyBackground";
+import { LoginBackground } from "@/components/LoginBackground";
 
 type LoginPageProps = {
   roomId: string;
@@ -17,7 +17,7 @@ export function LoginPage({
 }: LoginPageProps) {
   return (
     <main className="relative isolate grid min-h-dvh w-full min-w-0 grid-rows-[1fr_auto] overflow-x-hidden bg-vaux-bg-dark font-mono text-white box-border">
-      <LobbyBackground />
+      <LoginBackground />
 
       <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12">
         <div className="flex w-full max-w-[17.5rem] min-w-0 flex-col gap-3 sm:max-w-xs sm:gap-4 md:max-w-sm">
