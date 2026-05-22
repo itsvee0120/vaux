@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useId } from "react";
 import {
   type PlaybackState,
   getSyncedPosition,
@@ -86,16 +86,17 @@ export function YoutubePlayer({
   onPause,
   onEnded,
 }: Props) {
-  const containerId = useRef(
-    `yt-player-${Math.random().toString(36).slice(2)}`,
-  ).current;
+  const containerId = `yt-player-${useId().replace(/:/g, "")}`;
   const playerRef = useRef<YTPlayer | null>(null);
   const readyRef = useRef(false);
   const applyingRemote = useRef(false);
   const lastAppliedAt = useRef(0);
   const lastVideoId = useRef<string | null>(null);
   const playbackRef = useRef(playback);
-  playbackRef.current = playback;
+
+  useEffect(() => {
+    playbackRef.current = playback;
+  }, [playback]);
 
   // ── applyPlayback ──
   // Seeks or loads the video to match server state. Sets applyingRemote so host

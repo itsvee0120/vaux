@@ -53,10 +53,11 @@ export default function Home() {
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
+  const [isSeeking, setIsSeeking] = useState(false);
   const [seekUi, setSeekUi] = useState(0);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const roomIdRef = useRef(roomId);
-  roomIdRef.current = roomId;
+  const syncedPosition = getSyncedPosition(playback);
+  const seekValue = isSeeking ? seekUi : syncedPosition;
 
   // ── socket listeners ──
   // Subscribes once on mount; room:joined switches to room screen with playback snapshot.
@@ -100,37 +101,33 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setSeekUi(getSyncedPosition(playback));
-  }, [playback]);
-
-  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const emitPlay = useCallback((positionSeconds: number) => {
-    getSocket().emit("playback:play", {
-      roomId: roomIdRef.current,
-      positionSeconds,
-    });
-  }, []);
+  const emitPlay = useCallback(
+    (positionSeconds: number) => {
+      getSocket().emit("playback:play", { roomId, positionSeconds });
+    },
+    [roomId],
+  );
 
-  const emitPause = useCallback((positionSeconds: number) => {
-    getSocket().emit("playback:pause", {
-      roomId: roomIdRef.current,
-      positionSeconds,
-    });
-  }, []);
+  const emitPause = useCallback(
+    (positionSeconds: number) => {
+      getSocket().emit("playback:pause", { roomId, positionSeconds });
+    },
+    [roomId],
+  );
 
-  const emitSeek = useCallback((positionSeconds: number) => {
-    getSocket().emit("playback:seek", {
-      roomId: roomIdRef.current,
-      positionSeconds,
-    });
-  }, []);
+  const emitSeek = useCallback(
+    (positionSeconds: number) => {
+      getSocket().emit("playback:seek", { roomId, positionSeconds });
+    },
+    [roomId],
+  );
 
   const emitEnded = useCallback(() => {
-    getSocket().emit("playback:ended", { roomId: roomIdRef.current });
-  }, []);
+    getSocket().emit("playback:ended", { roomId });
+  }, [roomId]);
 
   // ── joinRoom ──
   // Connects socket and joins room; server assigns host to first member.
@@ -263,8 +260,8 @@ export default function Home() {
                         className="text-xs bg-zinc-800 hover:bg-zinc-700 rounded px-2 py-1"
                         onClick={() =>
                           playback.isPlaying
-                            ? emitPause(getSyncedPosition(playback))
-                            : emitPlay(getSyncedPosition(playback))
+                            ? emitPause(syncedPosition)
+                            : emitPlay(syncedPosition)
                         }
                       >
                         {playback.isPlaying ? "pause" : "play"}
@@ -274,20 +271,26 @@ export default function Home() {
                         min={0}
                         max={600}
                         step={0.5}
-                        value={seekUi}
+                        value={seekValue}
                         className="flex-1 accent-violet-500"
+                        onPointerDown={() => {
+                          setIsSeeking(true);
+                          setSeekUi(syncedPosition);
+                        }}
                         onChange={(e) => setSeekUi(Number(e.target.value))}
-                        onMouseUp={() => emitSeek(seekUi)}
-                        onTouchEnd={() => emitSeek(seekUi)}
+                        onPointerUp={(e) => {
+                          emitSeek(Number(e.currentTarget.value));
+                          setIsSeeking(false);
+                        }}
                       />
                       <span className="text-xs text-zinc-500 tabular-nums w-10 text-right">
-                        {Math.floor(seekUi)}s
+                        {Math.floor(seekValue)}s
                       </span>
                     </div>
                   )}
                   {!isHost && playback.isPlaying && (
                     <p className="text-xs text-zinc-600 mt-2">
-                      synced · {Math.floor(getSyncedPosition(playback))}s
+                      synced · {Math.floor(syncedPosition)}s
                     </p>
                   )}
                 </div>
