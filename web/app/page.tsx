@@ -141,6 +141,11 @@ export default function Home() {
     setSearchResults([]);
     const res = await fetch(
       `${SERVER}/youtube/search?q=${encodeURIComponent(searchQuery)}`,
+      {
+        headers: {
+          "x-api-key": process.env.NEXT_PUBLIC_API_KEY || "vaux-secret-123",
+        },
+      },
     );
     const data = await res.json();
     setSearchResults(data.results || []);

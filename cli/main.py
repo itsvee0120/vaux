@@ -65,7 +65,7 @@ def ensure_mpv():
 @click.option("--username", "-u", help="Your display name.")
 @click.option(
     "--server",
-    default="http://localhost:4000",
+    default="https://vaux.onrender.com",
     envvar="VAUX_SERVER_URL",
     show_default=True,
     help="vaux server URL.",
