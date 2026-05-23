@@ -3,6 +3,7 @@
 A real-time music listening room - join a room, build a queue together, vote on tracks, and listen in sync. Available as both a web app and a terminal CLI.
 
 ### 🌐 Live Demo: https://vaux-ten.vercel.app/
+### 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/ 
 
 ---
 
