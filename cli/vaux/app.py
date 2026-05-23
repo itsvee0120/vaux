@@ -16,7 +16,6 @@ Layout (single screen):
 """
 
 import asyncio
-import webbrowser
 import os
 import sys
 import shutil
@@ -25,7 +24,7 @@ import socket
 import secrets
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
+from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Header, Footer, Input, Button, Label, ListView,
     ListItem, Static, RichLog,
@@ -322,10 +321,7 @@ class NowPlaying(Static):
         self.set_interval(1, self._render_state)
 
     def update_state(self, state: PlaybackState):
-        old_id = self._state.video_id
         self._state = state
-        # if state.is_playing and state.video_id and state.video_id != old_id:
-        #     webbrowser.open(f"https://youtu.be/{state.video_id}?t={int(state.position_seconds)}")
         self._render_state()
 
     def _render_state(self):

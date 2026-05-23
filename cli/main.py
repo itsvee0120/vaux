@@ -4,13 +4,18 @@ vaux CLI — terminal client for vaux listening rooms.
 Usage:
     python main.py join <room-id> --username <name>
 """
-import asyncio
 import sys
 import os
 import shutil
+from importlib.metadata import version, PackageNotFoundError
 
-# Ensure python-mpv can find mpv-1.dll or mpv-2.dll if it's placed in this folder
-os.environ["PATH"] = os.path.dirname(os.path.abspath(__file__)) + os.pathsep + os.environ.get("PATH", "")
+try:
+    __version__ = version("vaux-cli")
+except PackageNotFoundError:
+    __version__ = "dev"
+
+# Add local user vendor folder to PATH just in case
+os.environ["PATH"] = os.path.expanduser("~/.vaux/mpv") + os.pathsep + os.environ.get("PATH", "")
 
 import click
 from vaux.app import VauxApp, LobbyApp
@@ -21,8 +26,7 @@ def ensure_mpv():
     if shutil.which(mpv_exe):
         return
         
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    vendor_dir = os.path.join(base_dir, "vendor", "mpv")
+    vendor_dir = os.path.expanduser("~/.vaux/mpv")
     mpv_path = os.path.join(vendor_dir, mpv_exe)
     
     if os.path.exists(mpv_path):
@@ -35,32 +39,55 @@ def ensure_mpv():
             import zipfile
             import io
             
-            click.echo("Downloading mpv for Windows (this may take a minute)...")
+            click.echo(f"Downloading mpv to {vendor_dir} (this may take a minute)...")
             try:
                 api_url = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
                 req = urllib.request.Request(api_url, headers={"User-Agent": "vaux-cli"})
                 with urllib.request.urlopen(req) as response:
                     data = json.loads(response.read().decode())
+                    # Prefer the v3 release, fallback to standard 64-bit
                     zip_url = next((a["browser_download_url"] for a in data.get("assets", []) 
-                                    if a["name"].startswith("mpv-x86_64-") and a["name"].endswith(".zip")), None)
+                                    if "mpv-x86_64-v3-" in a["name"] and (a["name"].endswith(".zip") or a["name"].endswith(".7z"))), None)
+                    if not zip_url:
+                        zip_url = next((a["browser_download_url"] for a in data.get("assets", []) 
+                                        if "mpv-x86_64-" in a["name"] and (a["name"].endswith(".zip") or a["name"].endswith(".7z"))), None)
                 
                 if zip_url:
                     os.makedirs(vendor_dir, exist_ok=True)
                     req = urllib.request.Request(zip_url, headers={"User-Agent": "vaux-cli"})
                     with urllib.request.urlopen(req) as response:
-                        with zipfile.ZipFile(io.BytesIO(response.read())) as z:
-                            for file_info in z.infolist():
-                                if file_info.filename.endswith("mpv.exe"):
-                                    source = z.open(file_info)
-                                    target_path = os.path.join(vendor_dir, "mpv.exe")
-                                    with open(target_path, "wb") as target:
-                                        shutil.copyfileobj(source, target)
-                                    break
+                        archive_data = io.BytesIO(response.read())
+                        target_path = os.path.join(vendor_dir, "mpv.exe")
+                        
+                        if zip_url.endswith(".7z"):
+                            try:
+                                import py7zr  # type: ignore
+                            except ImportError:
+                                click.echo("\nError: 'py7zr' is missing but required to extract mpv. Please run: pip install py7zr")
+                                return
+                            with py7zr.SevenZipFile(archive_data, mode='r') as z:
+                                for name in z.getnames():
+                                    if name.endswith("mpv.exe"):
+                                        file_dict = z.read(targets=[name])
+                                        with open(target_path, "wb") as target:
+                                            target.write(file_dict[name].getvalue())
+                                        break
+                        else:
+                            with zipfile.ZipFile(archive_data) as z:
+                                for file_info in z.infolist():
+                                    if file_info.filename.endswith("mpv.exe"):
+                                        source = z.open(file_info)
+                                        with open(target_path, "wb") as target:
+                                            shutil.copyfileobj(source, target)
+                                        break
             except Exception as e:
                 click.echo(f"Failed to auto-download mpv: {e}")
 
 
-@click.command()
+@click.command(
+    epilog="NOTE: vaux requires 'mpv' to play audio. You can download it here: https://mpv.io/installation/"
+)
+@click.version_option(version=__version__, prog_name="vaux")
 @click.argument("room_id", required=False)
 @click.option("--username", "-u", help="Your display name.")
 @click.option(
