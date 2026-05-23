@@ -2,8 +2,8 @@
 vaux CLI — terminal client for vaux listening rooms.
 
 Usage:
-    vaux join <room-id> <username>
     vaux
+    vaux join <room-id> <username>
 """
 
 import sys
@@ -29,25 +29,27 @@ except PackageNotFoundError:
     __version__ = "dev"
 
 # ----------------------------------------------------------------------
-# Vendor PATH (local mpv)
+# Config
 # ----------------------------------------------------------------------
+SERVER_URL = "https://vaux.onrender.com"
 VENDOR_DIR = os.path.expanduser("~/.vaux/mpv")
 
 
 def _add_vendor_to_path():
     os.environ["PATH"] = VENDOR_DIR + os.pathsep + os.environ.get("PATH", "")
 
+
 # ----------------------------------------------------------------------
-# MPV bootstrap
+# MPV bootstrap (OFFLINE-FIRST, NO NETWORK AFTER INSTALL)
 # ----------------------------------------------------------------------
 def ensure_mpv():
     """
-    Ensures mpv exists.
+    Ensures mpv is available.
 
-    Strategy:
+    Priority:
     1. system mpv
     2. ~/.vaux/mpv/mpv.exe
-    3. download mpv-dev-x86_64-v3 .7z from GitHub
+    3. download GitHub release (Windows only)
     """
 
     mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
@@ -63,6 +65,7 @@ def ensure_mpv():
         _add_vendor_to_path()
         return
 
+    # 3. non-windows fallback
     if sys.platform != "win32":
         click.echo("mpv required: https://mpv.io/installation/")
         sys.exit(1)
@@ -81,7 +84,9 @@ def ensure_mpv():
 
         assets = release.get("assets", [])
 
-        # Prefer mpv-dev-x86_64-v3 builds
+        # ----------------------------------------------------------
+        # prefer mpv-dev-x86_64-v3 builds
+        # ----------------------------------------------------------
         def score(a):
             name = a["name"]
             return (
@@ -127,12 +132,12 @@ def ensure_mpv():
                         break
 
         # ----------------------------------------------------------
-        # 7Z extraction (FIXED)
+        # 7Z extraction (SYSTEM 7z FIRST)
         # ----------------------------------------------------------
         else:
             extracted = False
 
-            # A. Try system 7z (correct usage: file path, not stdin)
+            # A. system 7z (recommended)
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     archive_path = os.path.join(tmp, "mpv.7z")
@@ -153,13 +158,13 @@ def ensure_mpv():
                             extracted = True
                             break
 
-            except Exception:
+            except FileNotFoundError:
                 pass
 
             # B. fallback py7zr
             if not extracted:
                 try:
-                    import py7zr
+                    import py7zr #type: ignore
                 except ImportError:
                     click.echo(
                         "\nCannot extract .7z archive.\n"
@@ -193,42 +198,70 @@ def ensure_mpv():
 # CLI
 # ----------------------------------------------------------------------
 @click.group(invoke_without_command=True)
+@click.option("--server", default=SERVER_URL, show_default=True, help="Vaux server URL.")
+@click.option("--debug", is_flag=True, help="Enable debug output.")
+@click.option("-u", "--username", help="Your display name (used for quick join).")
+@click.option("--version", is_flag=True, is_eager=True, help="Show version and exit.")
+@click.argument("room_id", required=False)
 @click.pass_context
-@click.version_option(version=__version__, prog_name="vaux")
-def cli(ctx):
-    """vaux — listen together in sync."""
+def cli(ctx, server, debug, username, version, room_id):
+    """
+    Vaux — synchronized listening rooms in the terminal.
+
+    Examples:
+
+      vaux
+          Open interactive lobby
+
+      vaux <room-id> -u <name>
+          Quick join a room
+
+      vaux join <room-id> <username>
+          Explicit join mode
+    """
 
     ensure_mpv()
 
-    if ctx.invoked_subcommand is None:
-        lobby = LobbyApp(server_url="https://vaux.onrender.com")
-        lobby.run()
+    # ------------------------
+    # version
+    # ------------------------
+    if version:
+        click.echo(f"vaux {__version__}")
+        return
 
-        if lobby.result is None:
-            return
+    # ------------------------
+    # subcommand mode
+    # ------------------------
+    if ctx.invoked_subcommand is not None:
+        return
 
-        room_id, username = lobby.result
-
+    # ------------------------
+    # quick join
+    # ------------------------
+    if room_id and username:
         VauxApp(
             room_id=room_id,
             username=username,
-            server_url="https://vaux.onrender.com"
+            server_url=server,
         ).run()
+        return
 
+    # ------------------------
+    # lobby fallback
+    # ------------------------
+    lobby = LobbyApp(server_url=server)
+    lobby.run()
 
-@cli.command()
-@click.argument("room_id")
-@click.argument("username")
-def join(room_id, username):
-    """Join a room directly."""
-    ensure_mpv()
+    if lobby.result is None:
+        return
+
+    room_id, username = lobby.result
 
     VauxApp(
         room_id=room_id,
         username=username,
-        server_url="https://vaux.onrender.com"
+        server_url=server,
     ).run()
-
 
 if __name__ == "__main__":
     cli()
