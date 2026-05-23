@@ -183,7 +183,7 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 - [x] Synchronized playback
 - [x] Host controls
 - [x] Chat
-- [x] Emoji reactions
+- [ ] Emoji reactions
 - [ ] Song history
 - [ ] Public room discovery
 - [ ] AI playlist seeding
