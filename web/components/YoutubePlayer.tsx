@@ -114,79 +114,10 @@ export function YoutubePlayer({
     onEndedRef.current = onEnded;
   }, [isHost, onPlay, onPause, onEnded]);
 
-  // ── buildPlayer ──
-  // Constructs a fresh YT.Player into wrapperRef. Called on mount and again on
-  // unlock so the new instance is created inside a trusted user-gesture stack,
-  // which is the only way to defeat YouTube's Error 150 bot-detection on autoplay.
-  const buildPlayer = useCallback(
-    (autoplayVideoId?: string, startSeconds?: number) => {
-      if (!wrapperRef.current || !window.YT) return;
-
-      // Tear down any existing player cleanly before rebuilding
-      if (playerRef.current) {
-        playerRef.current.destroy();
-        playerRef.current = null;
-      }
-      readyRef.current = false;
-
-      const targetEl = document.createElement("div");
-      wrapperRef.current.innerHTML = "";
-      wrapperRef.current.appendChild(targetEl);
-
-      playerRef.current = new window.YT.Player(targetEl, {
-        height: "300",
-        width: "100%",
-        playerVars: {
-          autoplay: autoplayVideoId ? 1 : 0, // 1 only when unlocking with a gesture
-          controls: 1, // Always enabled; pointer-events-none handles locking it for listeners
-          disablekb: 0,
-          modestbranding: 1,
-          rel: 0,
-          ...(autoplayVideoId
-            ? { start: Math.floor(startSeconds ?? 0), list: undefined }
-            : {}),
-          origin: window.location.origin,
-        },
-        events: {
-          onReady: () => {
-            readyRef.current = true;
-            if (autoplayVideoId) {
-              // Already set via playerVars; just make sure position is right
-              playerRef.current?.seekTo(startSeconds ?? 0, true);
-            } else {
-              applyPlayback(playbackRef.current);
-            }
-          },
-          onStateChange: (event) => {
-            const YT = window.YT!;
-            setLocalPlaying(event.data === YT.PlayerState.PLAYING);
-
-            if (!isHostRef.current) {
-              // If listener manually clicks the iframe to bypass restrictions, sync them!
-              if (
-                event.data === YT.PlayerState.PLAYING &&
-                !applyingRemote.current
-              ) {
-                applyPlayback(playbackRef.current);
-              }
-              return;
-            }
-
-            // Host: echo state changes back to the server.
-            if (applyingRemote.current || !playerRef.current) return;
-            const t = playerRef.current.getCurrentTime();
-            if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
-            else if (event.data === YT.PlayerState.PAUSED)
-              onPauseRef.current(t);
-            else if (event.data === YT.PlayerState.ENDED) onEndedRef.current();
-          },
-        },
-      });
-      // applyPlayback is defined below but stable (useCallback []); fine to ref here
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    },
-    [],
-  );
+  // ── applyPlaybackRef ──
+  // Stable ref to applyPlayback so buildPlayer can call it without a forward
+  // reference — avoids the "accessed before declaration" lint error.
+  const applyPlaybackRef = useRef<(state: PlaybackState) => void>(() => {});
 
   // ── applyPlayback ──
   // Seeks or loads the video to match server state. Sets applyingRemote so host
@@ -235,6 +166,82 @@ export function YoutubePlayer({
     }, 2000);
   }, []);
 
+  // Keep the ref in sync so buildPlayer always calls the latest version
+  useEffect(() => {
+    applyPlaybackRef.current = applyPlayback;
+  }, [applyPlayback]);
+
+  // ── buildPlayer ──
+  // Constructs a fresh YT.Player into wrapperRef. Called on mount and again on
+  // unlock so the new instance is created inside a trusted user-gesture stack,
+  // which is the only way to defeat YouTube's Error 150 bot-detection on autoplay.
+  const buildPlayer = useCallback(
+    (autoplayVideoId?: string, startSeconds?: number) => {
+      if (!wrapperRef.current || !window.YT) return;
+
+      // Tear down any existing player cleanly before rebuilding
+      if (playerRef.current) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
+      readyRef.current = false;
+
+      const targetEl = document.createElement("div");
+      wrapperRef.current.innerHTML = "";
+      wrapperRef.current.appendChild(targetEl);
+
+      playerRef.current = new window.YT.Player(targetEl, {
+        height: "300",
+        width: "100%",
+        playerVars: {
+          autoplay: autoplayVideoId ? 1 : 0, // 1 only when unlocking with a gesture
+          controls: 1, // Always enabled; pointer-events-none handles locking it for listeners
+          disablekb: 0,
+          modestbranding: 1,
+          rel: 0,
+          ...(autoplayVideoId ? { start: Math.floor(startSeconds ?? 0) } : {}),
+          origin: window.location.origin,
+        },
+        events: {
+          onReady: () => {
+            readyRef.current = true;
+            if (autoplayVideoId) {
+              // Already set via playerVars; just make sure position is right
+              playerRef.current?.seekTo(startSeconds ?? 0, true);
+            } else {
+              // Use the ref so we never access applyPlayback before it is declared
+              applyPlaybackRef.current(playbackRef.current);
+            }
+          },
+          onStateChange: (event) => {
+            const YT = window.YT!;
+            setLocalPlaying(event.data === YT.PlayerState.PLAYING);
+
+            if (!isHostRef.current) {
+              // If listener manually clicks the iframe to bypass restrictions, sync them!
+              if (
+                event.data === YT.PlayerState.PLAYING &&
+                !applyingRemote.current
+              ) {
+                applyPlaybackRef.current(playbackRef.current);
+              }
+              return;
+            }
+
+            // Host: echo state changes back to the server.
+            if (applyingRemote.current || !playerRef.current) return;
+            const t = playerRef.current.getCurrentTime();
+            if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
+            else if (event.data === YT.PlayerState.PAUSED)
+              onPauseRef.current(t);
+            else if (event.data === YT.PlayerState.ENDED) onEndedRef.current();
+          },
+        },
+      });
+    },
+    [],
+  );
+
   // ── player init ──
   // Creates YT.Player on mount; rebuilt on unlock via buildPlayer.
   useEffect(() => {
@@ -254,17 +261,12 @@ export function YoutubePlayer({
     };
   }, [buildPlayer]);
 
-  // Detect if listener's browser is blocking autoplay
+  // Detect if listener's browser is blocking autoplay.
+  // Derive isBlocked inline so we never call setState synchronously in an effect body.
   useEffect(() => {
-    if (isHost) {
-      setShowBlockedOverlay(false);
-      return;
-    }
-    const isBlocked = playback.isPlaying && !localPlaying;
+    const isBlocked = !isHost && playback.isPlaying && !localPlaying;
     const timer = setTimeout(
-      () => {
-        setShowBlockedOverlay(isBlocked);
-      },
+      () => setShowBlockedOverlay(isBlocked),
       isBlocked ? 1500 : 0,
     );
     return () => clearTimeout(timer);
