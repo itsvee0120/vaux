@@ -6,7 +6,7 @@ __pycache__/
 .venv/
 .next/
 dist/
-.vscode/extensions.json
+.vscode/
 cookies.txt
 
 # Local logs and vendor binaries
