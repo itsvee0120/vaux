@@ -194,12 +194,19 @@ export function YoutubePlayer({
             const YT = window.YT!;
             setLocalPlaying(event.data === YT.PlayerState.PLAYING);
 
-            if (
-              !isHostRef.current ||
-              applyingRemote.current ||
-              !playerRef.current
-            )
+            if (!isHostRef.current) {
+              // If listener manually clicks the iframe to bypass restrictions, sync them!
+              if (
+                event.data === YT.PlayerState.PLAYING &&
+                !applyingRemote.current
+              ) {
+                applyPlayback(playbackRef.current);
+              }
               return;
+            }
+
+            // Host: echo state changes back to the server.
+            if (applyingRemote.current || !playerRef.current) return;
             const t = playerRef.current.getCurrentTime();
             if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
             else if (event.data === YT.PlayerState.PAUSED)
@@ -220,7 +227,11 @@ export function YoutubePlayer({
 
   // Detect if listener's browser is blocking autoplay
   useEffect(() => {
-    const isBlocked = !isHost && playback.isPlaying && !localPlaying;
+    if (isHost) {
+      setShowBlockedOverlay(false);
+      return;
+    }
+    const isBlocked = playback.isPlaying && !localPlaying;
     const timer = setTimeout(
       () => {
         setShowBlockedOverlay(isBlocked);
@@ -230,22 +241,29 @@ export function YoutubePlayer({
     return () => clearTimeout(timer);
   }, [isHost, playback.isPlaying, localPlaying]);
 
+  // ── Unlock helper ──
+  // Resets all guards so applyPlayback fires a fresh loadVideoById on next call.
+  const unlock = useCallback(() => {
+    lastVideoId.current = null; // Force a fresh load with the user gesture
+    lastAppliedAt.current = 0;
+    applyingRemote.current = false;
+    if (applyTimeoutRef.current) {
+      clearTimeout(applyTimeoutRef.current);
+      applyTimeoutRef.current = null;
+    }
+    applyPlayback(playbackRef.current);
+    setShowBlockedOverlay(false);
+  }, [applyPlayback]);
+
   // ── Global click unlock ──
   // If autoplay is blocked, unlock it seamlessly if the user clicks ANYWHERE
   // on the page (e.g., sending a chat message, voting on a song).
   useEffect(() => {
     if (!showBlockedOverlay) return;
-
-    const unlockAudio = () => {
-      lastVideoId.current = null; // Force a fresh load with the user gesture
-      applyPlayback(playbackRef.current);
-      setShowBlockedOverlay(false);
-    };
-
-    window.addEventListener("pointerdown", unlockAudio, { capture: true });
+    window.addEventListener("pointerdown", unlock, { capture: true });
     return () =>
-      window.removeEventListener("pointerdown", unlockAudio, { capture: true });
-  }, [showBlockedOverlay, applyPlayback]);
+      window.removeEventListener("pointerdown", unlock, { capture: true });
+  }, [showBlockedOverlay, unlock]);
 
   // ── playback sync ──
   // Re-applies remote state whenever the server broadcasts a new updatedAt.
@@ -255,21 +273,21 @@ export function YoutubePlayer({
     applyPlayback(playback);
   }, [playback, applyPlayback]);
 
+  // Listeners get pointer-events back only while the overlay is showing
+  // (so they can click the button), otherwise keep the iframe locked.
+  const lockPointer = !isHost && !showBlockedOverlay;
+
   return (
     <div className="relative w-full">
       <div
         ref={wrapperRef}
-        className={!isHost ? "pointer-events-none" : undefined}
+        className={lockPointer ? "pointer-events-none" : undefined}
       />
       {showBlockedOverlay && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
           <button
             className="cursor-pointer rounded-full bg-vaux-green px-6 py-3 font-bold text-black shadow-lg transition-transform hover:scale-105 active:scale-95"
-            onClick={() => {
-              lastVideoId.current = null; // Force a fresh load with the user gesture
-              applyPlayback(playbackRef.current);
-              setShowBlockedOverlay(false);
-            }}
+            onClick={unlock}
           >
             ▶ Click to Unmute / Play
           </button>
