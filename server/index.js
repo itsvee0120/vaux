@@ -12,13 +12,23 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: true,
     methods: ["GET", "POST"],
+    credentials: true,
   },
 });
 
-app.use(cors());
+app.use(
+  cors({
+    origin: true,
+    credentials: true,
+  }),
+);
 app.use(express.json());
+
+app.get("/", (req, res) => {
+  res.send("Vaux API is running!");
+});
 
 // ─────────────────────────────
 // HEALTH
