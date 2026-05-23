@@ -17,6 +17,8 @@ Layout (single screen):
 
 import asyncio
 import webbrowser
+import os
+import sys
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
@@ -31,6 +33,60 @@ from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult
 
+import subprocess
+
+
+class MPVPlayer:
+    def __init__(self, path: str):
+        self.path = path
+        self.proc = None
+        self.mpv_dir = os.path.dirname(path)
+        self.log_fd = open(os.path.join(self.mpv_dir, "mpv_debug.log"), "w")
+
+        # Auto-update yt-dlp in the background so it never goes out of date again
+        yt_exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+        yt_path = os.path.join(self.mpv_dir, yt_exe)
+        if os.path.exists(yt_path):
+            subprocess.Popen([yt_path, "-U"], cwd=self.mpv_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def play(self, url: str, start: float = 0.0):
+        self.stop()
+        
+        cookies_path = os.path.join(self.mpv_dir, "cookies.txt")
+        if os.path.exists(cookies_path):
+            # Use relative path since cwd is already mpv_dir; prevents parsing errors on Windows paths
+            ytdl_opts = "cookies=cookies.txt,extractor-args=youtube:player_client=android"
+        else:
+            ytdl_opts = "cookies-from-browser=opera,extractor-args=youtube:player_client=android"
+
+        yt_exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+
+        cmd = [
+            self.path,
+            "--no-video",
+            "--ytdl=yes",
+            "--ytdl-format=bestaudio/best",
+            f"--script-opts=ytdl_hook-ytdl_path={yt_exe}",
+            f"--ytdl-raw-options={ytdl_opts}",
+            f"--start={int(start)}",
+            "--msg-level=ytdl_hook=trace",
+            url,
+        ]
+        
+        kwargs = {
+            "cwd": self.mpv_dir,
+            "stdout": self.log_fd,
+            "stderr": subprocess.STDOUT,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            
+        self.proc = subprocess.Popen(cmd, **kwargs)
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc = None
 
 # ── NowPlaying widget ──────────────────────────────────────────────────────
 class NowPlaying(Static):
@@ -57,7 +113,7 @@ class NowPlaying(Static):
         if not s.video_id:
             self.update("◼  no track playing")
             return
-        icon = "▶" if s.is_playing else "⏸"
+        icon = "⏸" if s.is_playing else "▶"
         pos = s.formatted_position()
         title = (s.title or "")[:50]
         channel = s.channel or ""
@@ -187,6 +243,13 @@ class VauxApp(App):
         self.queue: list[dict] = []
         self.playback = PlaybackState()
         self.search_results: list[SearchResult] = []
+        self.last_video_id = None
+
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
+        mpv_path = os.path.join(base_dir, "vendor", "mpv", mpv_exe)
+        if os.path.exists(mpv_path):
+            self.player = MPVPlayer(mpv_path)
 
     # ── layout ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -219,8 +282,11 @@ class VauxApp(App):
         self._register_socket_events()
         await self.socket.connect()
         await self.socket.join_room(self.room_id, self.username, self.username)
+        self.set_interval(1.0, self._check_player_status)
 
     async def on_unmount(self):
+        if getattr(self, "player", None):
+            self.player.stop()
         await self.socket.disconnect()
 
     # ── socket event wiring ────────────────────────────────────────────────
@@ -243,7 +309,10 @@ class VauxApp(App):
         self.playback = PlaybackState.from_dict(pb)
         await self._refresh_queue()
         self._refresh_now_playing()
+        self._apply_playback()
         self._post_system(f"joined [{self.role}]")
+        if not getattr(self, "player", None):
+            self._post_system("mpv executable not found in vendor/mpv. Audio playback is disabled.")
 
     async def _on_member_joined(self, data: dict):
         uname = data.get("username", "?")
@@ -268,6 +337,7 @@ class VauxApp(App):
     async def _on_playback_state(self, data: dict):
         self.playback = PlaybackState.from_dict(data)
         self._refresh_now_playing()
+        self._apply_playback()
 
     async def _on_chat_message(self, data: dict):
         uname = data.get("username", "?")
@@ -301,6 +371,43 @@ class VauxApp(App):
         t = Text(text, style="dim italic")
         log.write(t)
 
+    def _check_player_status(self):
+        """Polls the mpv process to auto-skip when a track ends naturally or crashes."""
+        # Only the host is responsible for advancing the queue
+        if not self.is_host or not getattr(self, "playback", None) or not self.playback.is_playing:
+            return
+            
+        if getattr(self, "player", None) and self.player.proc:
+            if self.player.proc.poll() is not None:
+                self.player.proc = None
+                asyncio.create_task(self._trigger_ended())
+
+    def _apply_playback(self):
+        """Syncs the python-mpv player instance with the server playback state."""
+        if not getattr(self, "player", None):
+            return
+            
+        s = self.playback
+        if not s.video_id:
+            self.player.stop()
+            self.last_video_id = None
+            return
+            
+        # PLAY NEW TRACK (OR RESUME PAUSED)
+        if s.video_id != self.last_video_id and s.is_playing:
+            target_pos = s.synced_position()
+            self.player.play(f"https://youtu.be/{s.video_id}", start=target_pos)
+            self.last_video_id = s.video_id
+
+        if not s.is_playing:
+            self.player.stop()
+            self.last_video_id = None
+
+    async def _trigger_ended(self):
+        """Tells the server the track finished so it can auto-play the next queue item."""
+        if self.is_host:
+            await self.socket.ended(self.room_id)
+
     # ── button handlers ────────────────────────────────────────────────────
     async def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "search-btn":
@@ -332,6 +439,17 @@ class VauxApp(App):
         text = inp.value.strip()
         if not text:
             return
+            
+        # Intercept /host command to transfer host privileges
+        if text.startswith("/host "):
+            if not self.is_host:
+                self._post_system("Only the host can transfer privileges.")
+            else:
+                new_host = text[6:].strip()
+                await self.socket.transfer_host(self.room_id, new_host)
+            inp.value = ""
+            return
+
         await self.socket.send_chat(self.room_id, self.username, self.username, text)
         inp.value = ""
 

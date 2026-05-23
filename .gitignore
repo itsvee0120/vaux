@@ -7,3 +7,10 @@ __pycache__/
 .next/
 dist/
 .vscode/extensions.json
+cookies.txt
+
+# Local logs and vendor binaries
+mpv_debug.log
+cli/vendor/mpv/*.exe
+cli/vendor/mpv/*.dll
+cli/vendor/mpv/*.com

@@ -1,10 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useCallback, useId } from "react";
-import {
-  type PlaybackState,
-  getSyncedPosition,
-} from "@/lib/playback";
+import { useEffect, useRef, useCallback } from "react";
+import { type PlaybackState, getSyncedPosition } from "@/lib/playback";
 
 type YTPlayer = {
   loadVideoById: (videoId: string, startSeconds?: number) => void;
@@ -17,7 +14,7 @@ type YTPlayer = {
 
 type YTNamespace = {
   Player: new (
-    elementId: string,
+    elementId: string | HTMLElement,
     options: {
       height: string;
       width: string;
@@ -86,7 +83,7 @@ export function YoutubePlayer({
   onPause,
   onEnded,
 }: Props) {
-  const containerId = `yt-player-${useId().replace(/:/g, "")}`;
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
   const readyRef = useRef(false);
   const applyingRemote = useRef(false);
@@ -131,9 +128,13 @@ export function YoutubePlayer({
 
     (async () => {
       await loadYouTubeApi();
-      if (cancelled || !window.YT) return;
+      if (cancelled || !window.YT || !wrapperRef.current) return;
 
-      playerRef.current = new window.YT.Player(containerId, {
+      const targetEl = document.createElement("div");
+      wrapperRef.current.innerHTML = "";
+      wrapperRef.current.appendChild(targetEl);
+
+      playerRef.current = new window.YT.Player(targetEl, {
         height: "300",
         width: "100%",
         playerVars: {
@@ -149,8 +150,7 @@ export function YoutubePlayer({
             applyPlayback(playbackRef.current);
           },
           onStateChange: (event) => {
-            if (!isHost || applyingRemote.current || !playerRef.current)
-              return;
+            if (!isHost || applyingRemote.current || !playerRef.current) return;
             const YT = window.YT!;
             const t = playerRef.current.getCurrentTime();
             if (event.data === YT.PlayerState.PLAYING) onPlay(t);
@@ -167,7 +167,7 @@ export function YoutubePlayer({
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [containerId, isHost, onPlay, onPause, onEnded, applyPlayback]);
+  }, [isHost, onPlay, onPause, onEnded, applyPlayback]);
 
   // ── playback sync ──
   // Re-applies remote state whenever the server broadcasts a new updatedAt.
@@ -179,8 +179,8 @@ export function YoutubePlayer({
 
   return (
     <div
+      ref={wrapperRef}
       className={!isHost ? "pointer-events-none" : undefined}
-      id={containerId}
     />
   );
 }
