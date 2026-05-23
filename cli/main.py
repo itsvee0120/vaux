@@ -68,10 +68,10 @@ def ensure_mpv():
     # 3. non-windows fallback
     if sys.platform != "win32":
         click.echo("mpv required: https://mpv.io/installation/")
-        sys.exit(1)
+        return
 
     if not click.confirm("mpv not found. Download it automatically?"):
-        sys.exit(1)
+        return
 
     click.echo("Fetching latest mpv build...")
 
@@ -172,7 +172,14 @@ def ensure_mpv():
                         "  - 7-Zip (recommended)\n"
                         "  - pip install py7zr\n"
                     )
-                    sys.exit(1)
+                    return
+                click.echo(
+                    "\n[!] Cannot extract mpv.\n\n"
+                    "The downloaded mpv archive is a .7z file that uses BCJ2 compression, which Python cannot extract natively.\n"
+                    "Please install 7-Zip (https://7-zip.org/) so vaux can extract it automatically, OR install mpv globally via winget:\n\n"
+                    "    winget install mpv.mpv\n"
+                )
+                return
 
                 with tempfile.TemporaryDirectory() as tmp:
                     with py7zr.SevenZipFile(archive, mode="r") as z:
@@ -192,7 +199,7 @@ def ensure_mpv():
 
     except Exception as e:
         click.echo(f"mpv setup failed: {e}")
-        sys.exit(1)
+        return
 
 # ----------------------------------------------------------------------
 # CLI
