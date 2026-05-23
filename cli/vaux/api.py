@@ -5,6 +5,8 @@ Currently covers YouTube search; extend as new endpoints are added.
 
 import httpx
 import os
+import sys
+import shutil
 import asyncio
 from dataclasses import dataclass
 
@@ -39,17 +41,50 @@ async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
     ]
 
 
+def _get_ytdlp_exe() -> str:
+    """Find yt-dlp executable, preferring venv then PATH then vendor dir."""
+    exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+
+    if sys.prefix:
+        scripts = "Scripts" if sys.platform == "win32" else "bin"
+        venv_path = os.path.join(sys.prefix, scripts, exe)
+        if os.path.exists(venv_path):
+            return venv_path
+
+    if found := (shutil.which(exe) or shutil.which("yt-dlp")):
+        return found
+
+    vendor_path = os.path.join(os.path.expanduser("~/.vaux/mpv"), exe)
+    if os.path.exists(vendor_path):
+        return vendor_path
+
+    return exe
+
+
 async def get_stream_url(server_url: str, video_id: str) -> str | None:
     """Resolves the direct audio stream URL locally using yt-dlp."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "yt-dlp", "-f", "bestaudio/best", "--get-url", "--no-warnings",
-            f"https://www.youtube.com/watch?v={video_id}",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        url = stdout.decode().strip()
-        return url if url else None
-    except Exception:
-        return None
+    ytdlp = _get_ytdlp_exe()
+
+    strategies = [
+        ["--extractor-args", "youtube:player_client=android_vr"],
+        ["-f", "bestaudio/best", "--cookies-from-browser", "firefox"],
+        ["-f", "bestaudio/best", "--cookies-from-browser", "chrome"],
+    ]
+
+    for extra_args in strategies:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ytdlp, "--get-url", "--no-warnings",
+                *extra_args,
+                f"https://www.youtube.com/watch?v={video_id}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+            url = stdout.decode("utf-8", errors="ignore").strip()
+            if url:
+                return url
+        except Exception:
+            continue
+
+    return None
