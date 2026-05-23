@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useState } from "react";
 import { type PlaybackState, getSyncedPosition } from "@/lib/playback";
 
 type YTPlayer = {
   loadVideoById: (videoId: string, startSeconds?: number) => void;
+  cueVideoById: (videoId: string, startSeconds?: number) => void;
   playVideo: () => void;
   pauseVideo: () => void;
   seekTo: (seconds: number, allowSeekAhead: boolean) => void;
   getCurrentTime: () => number;
+  getPlayerState: () => number;
   destroy: () => void;
 };
 
@@ -87,9 +89,13 @@ export function YoutubePlayer({
   const playerRef = useRef<YTPlayer | null>(null);
   const readyRef = useRef(false);
   const applyingRemote = useRef(false);
+  const applyTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastAppliedAt = useRef(0);
   const lastVideoId = useRef<string | null>(null);
   const playbackRef = useRef(playback);
+
+  const [localPlaying, setLocalPlaying] = useState(false);
+  const [showBlockedOverlay, setShowBlockedOverlay] = useState(false);
 
   // Store volatile props in refs so we don't have to recreate the player when they change
   const isHostRef = useRef(isHost);
@@ -116,12 +122,32 @@ export function YoutubePlayer({
     if (!player || !readyRef.current || !state.videoId) return;
 
     const target = getSyncedPosition(state);
+
+    // Prevent the "play -> broadcast -> seek -> buffer -> play" feedback loop
+    // by ignoring server echoes if the host is already perfectly in sync.
+    if (isHostRef.current) {
+      const current = player.getCurrentTime();
+      const isPlaying =
+        player.getPlayerState() === window.YT?.PlayerState?.PLAYING;
+      if (
+        state.videoId === lastVideoId.current &&
+        state.isPlaying === isPlaying &&
+        Math.abs(current - target) < 1.5
+      ) {
+        lastAppliedAt.current = state.updatedAt;
+        return;
+      }
+    }
+
     applyingRemote.current = true;
 
     if (state.videoId !== lastVideoId.current) {
       lastVideoId.current = state.videoId;
-      player.loadVideoById(state.videoId, target);
-      if (!state.isPlaying) player.pauseVideo();
+      if (state.isPlaying) {
+        player.loadVideoById(state.videoId, target);
+      } else {
+        player.cueVideoById(state.videoId, target);
+      }
     } else {
       player.seekTo(target, true);
       if (state.isPlaying) player.playVideo();
@@ -129,9 +155,10 @@ export function YoutubePlayer({
     }
 
     lastAppliedAt.current = state.updatedAt;
-    setTimeout(() => {
+    if (applyTimeoutRef.current) clearTimeout(applyTimeoutRef.current);
+    applyTimeoutRef.current = setTimeout(() => {
       applyingRemote.current = false;
-    }, 500);
+    }, 2000);
   }, []);
 
   // ── player init ──
@@ -156,6 +183,7 @@ export function YoutubePlayer({
           disablekb: 0,
           modestbranding: 1,
           rel: 0,
+          origin: window.location.origin,
         },
         events: {
           onReady: () => {
@@ -163,13 +191,15 @@ export function YoutubePlayer({
             applyPlayback(playbackRef.current);
           },
           onStateChange: (event) => {
+            const YT = window.YT!;
+            setLocalPlaying(event.data === YT.PlayerState.PLAYING);
+
             if (
               !isHostRef.current ||
               applyingRemote.current ||
               !playerRef.current
             )
               return;
-            const YT = window.YT!;
             const t = playerRef.current.getCurrentTime();
             if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
             else if (event.data === YT.PlayerState.PAUSED)
@@ -188,6 +218,18 @@ export function YoutubePlayer({
     };
   }, [applyPlayback]);
 
+  // Detect if listener's browser is blocking autoplay
+  useEffect(() => {
+    if (!isHost && playback.isPlaying && !localPlaying) {
+      const timer = setTimeout(() => {
+        setShowBlockedOverlay(true);
+      }, 1500); // 1.5s grace period for buffering/loading
+      return () => clearTimeout(timer);
+    } else {
+      setShowBlockedOverlay(false);
+    }
+  }, [isHost, playback.isPlaying, localPlaying]);
+
   // ── playback sync ──
   // Re-applies remote state whenever the server broadcasts a new updatedAt.
   useEffect(() => {
@@ -197,9 +239,27 @@ export function YoutubePlayer({
   }, [playback, applyPlayback]);
 
   return (
-    <div
-      ref={wrapperRef}
-      className={!isHost ? "pointer-events-none" : undefined}
-    />
+    <div className="relative w-full">
+      <div
+        ref={wrapperRef}
+        className={!isHost ? "pointer-events-none" : undefined}
+      />
+      {showBlockedOverlay && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">
+          <button
+            className="cursor-pointer rounded-full bg-vaux-green px-6 py-3 font-bold text-black shadow-lg transition-transform hover:scale-105 active:scale-95"
+            onClick={() => {
+              applyPlayback(playbackRef.current);
+              setShowBlockedOverlay(false);
+            }}
+          >
+            ▶ Click to Unmute / Play
+          </button>
+          <p className="mt-3 text-xs font-semibold text-vaux-light">
+            Browser prevented autoplay
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
