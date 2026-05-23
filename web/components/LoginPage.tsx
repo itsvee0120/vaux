@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { LoginBackground } from "@/components/LoginBackground";
 
 // ── generateRoomSlug ──
@@ -124,15 +124,15 @@ export function LoginPage({
   // Track which tab the user is on — "create" generates a slug, "join" is free-type
   const [mode, setMode] = useState<"create" | "join">("create");
 
-  // Generate the initial slug once on the client and store it in state so
-  // the server and client never render different values (fixes hydration mismatch).
-  const [generatedSlug, setGeneratedSlug] = useState<string>(() => {
-    const slug = generateRoomSlug();
-    // Push the initial slug up to the parent so onJoin() has the right value
-    // immediately without requiring the user to interact first.
-    onRoomIdChange(slug);
-    return slug;
-  });
+  // Slug is generated client-side only to avoid SSR hydration mismatches.
+  const [generatedSlug, setGeneratedSlug] = useState("");
+
+  useEffect(() => {
+    if (mode !== "create" || generatedSlug) return;
+    const slug = roomId.trim() || generateRoomSlug();
+    setGeneratedSlug(slug);
+    if (!roomId.trim()) onRoomIdChange(slug);
+  }, [mode, roomId, generatedSlug, onRoomIdChange]);
 
   function handleCreate() {
     // Generate a fresh slug, sync it both locally and up to the parent
@@ -208,7 +208,7 @@ export function LoginPage({
               // ── create mode: show generated slug with a re-roll button ──
               <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3">
                 <span className="flex-1 truncate text-base text-vaux-green sm:text-sm">
-                  {generatedSlug}
+                  {generatedSlug || "…"}
                 </span>
                 <button
                   type="button"

@@ -6,15 +6,30 @@ import { type PlaybackState, EMPTY_PLAYBACK } from "@/lib/playback";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { LoginPage } from "@/components/LoginPage";
 import { LobbyPage } from "@/components/LobbyPage";
+import { loadSession, saveSession } from "@/lib/session";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
 
-// ── Home ──
-// Orchestrates login (join) and lobby (room) screens; socket state lives here.
+/** Must match server `API_KEY` / CLI `VAUX_API_KEY` default when env is unset. */
+const DEFAULT_API_KEY = "vaux-02187xdsx-4335";
+
+function joinSocketRoom(roomId: string, username: string) {
+  const socket = getSocket();
+  const payload = { roomId, userId: username, username };
+  if (socket.connected) {
+    socket.emit("room:join", payload);
+  } else {
+    socket.connect();
+    socket.once("connect", () => socket.emit("room:join", payload));
+  }
+}
+
 export default function Home() {
+  const [appReady, setAppReady] = useState(false);
   const [screen, setScreen] = useState<"lobby" | "room">("lobby");
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
+  const [restoring, setRestoring] = useState(false);
   const [members, setMembers] = useState<
     { userId: string; username: string; role: string }[]
   >([]);
@@ -28,13 +43,13 @@ export default function Home() {
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const usernameRef = useRef(username);
+
   useEffect(() => {
     usernameRef.current = username;
   }, [username]);
+
   useEffect(() => {
     const socket = getSocket();
-
-    socket.on("connect", () => {});
 
     socket.on(
       "room:joined",
@@ -44,6 +59,7 @@ export default function Home() {
         setIsHost(role === "host");
         setMembers(initialMembers ?? []);
         setScreen("room");
+        setRestoring(false);
       },
     );
 
@@ -68,7 +84,7 @@ export default function Home() {
     });
 
     socket.on("host:changed", ({ newHostId }) => {
-      setIsHost(newHostId === username);
+      setIsHost(newHostId === usernameRef.current);
       setMembers((prev) =>
         prev.map((m) => ({
           ...m,
@@ -78,17 +94,12 @@ export default function Home() {
     });
 
     socket.on("queue:updated", ({ queue }) => setQueue(queue));
-
-    socket.on("playback:state", (state: PlaybackState) => {
-      setPlayback(state);
-    });
-
+    socket.on("playback:state", (state: PlaybackState) => setPlayback(state));
     socket.on("chat:message", ({ username: msgUsername, text }) => {
       setMessages((p) => [...p, { username: msgUsername, text }]);
     });
 
     return () => {
-      socket.off("connect");
       socket.off("room:joined");
       socket.off("room:member_joined");
       socket.off("room:member_left");
@@ -97,7 +108,25 @@ export default function Home() {
       socket.off("playback:state");
       socket.off("chat:message");
     };
-  }, [username]);
+  }, []);
+
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const session = loadSession();
+
+    if (session) {
+      setRestoring(true);
+      setRoomId(session.roomId);
+      setUsername(session.username);
+      joinSocketRoom(session.roomId, session.username);
+      timeout = setTimeout(() => setRestoring(false), 12_000);
+    }
+
+    setAppReady(true);
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -129,10 +158,13 @@ export default function Home() {
   }, [roomId]);
 
   function joinRoom() {
-    if (!roomId.trim() || !username.trim()) return;
-    const socket = getSocket();
-    socket.connect();
-    socket.emit("room:join", { roomId, userId: username, username });
+    const rid = roomId.trim();
+    const user = username.trim();
+    if (!rid || !user) return;
+
+    saveSession(rid, user);
+    setRestoring(true);
+    joinSocketRoom(rid, user);
   }
 
   async function searchYouTube() {
@@ -143,7 +175,7 @@ export default function Home() {
       `${SERVER}/youtube/search?q=${encodeURIComponent(searchQuery)}`,
       {
         headers: {
-          "x-api-key": process.env.NEXT_PUBLIC_API_KEY || "vaux-secret-123",
+          "x-api-key": process.env.NEXT_PUBLIC_API_KEY || DEFAULT_API_KEY,
         },
       },
     );
@@ -182,6 +214,16 @@ export default function Home() {
 
   function transferHost(newHostId: string) {
     getSocket().emit("host:transfer", { roomId, newHostId });
+  }
+
+  if (!appReady || restoring) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-black font-mono text-vaux-green">
+        <p className="text-sm">
+          {restoring ? "Rejoining room…" : "Loading…"}
+        </p>
+      </main>
+    );
   }
 
   if (screen === "lobby") {
