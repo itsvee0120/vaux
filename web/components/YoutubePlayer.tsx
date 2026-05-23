@@ -20,6 +20,7 @@ type YTNamespace = {
     options: {
       height: string;
       width: string;
+      videoId?: string;
       playerVars?: Record<string, string | number>;
       events?: {
         onReady?: () => void;
@@ -33,7 +34,6 @@ type YTNamespace = {
     ENDED: number;
   };
 };
-
 declare global {
   interface Window {
     YT?: YTNamespace;
@@ -193,6 +193,9 @@ export function YoutubePlayer({
       playerRef.current = new window.YT.Player(targetEl, {
         height: "300",
         width: "100%",
+        // Pass videoId here so YouTube's embed server has it from the start,
+        // not just in the onReady callback — fixes the Playback ID CDN error
+        videoId: autoplayVideoId,
         playerVars: {
           autoplay: autoplayVideoId ? 1 : 0, // 1 only when unlocking with a gesture
           controls: 1, // Always enabled; pointer-events-none handles locking it for listeners
@@ -206,7 +209,7 @@ export function YoutubePlayer({
           onReady: () => {
             readyRef.current = true;
             if (autoplayVideoId) {
-              // Already set via playerVars; just make sure position is right
+              // Seek to exact synced position — start playerVar only accepts integers
               playerRef.current?.seekTo(startSeconds ?? 0, true);
             } else {
               // Use the ref so we never access applyPlayback before it is declared
