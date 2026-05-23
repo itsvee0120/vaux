@@ -20,6 +20,8 @@ import webbrowser
 import os
 import sys
 import shutil
+import json
+import socket
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
@@ -41,14 +43,21 @@ class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
         self.proc = None
+        self.ipc_path = r"\\.\pipe\vaux_mpv_ipc" if sys.platform == "win32" else "/tmp/vaux_mpv_ipc"
 
-    def play(self, url: str, start: float = 0.0):
+    def play(self, url: str, start: float = 0.0, volume: int = 100):
         self.stop()
+        
+        if sys.platform != "win32" and os.path.exists(self.ipc_path):
+            try: os.remove(self.ipc_path)
+            except OSError: pass
         
         cmd = [
             self.path,
             "--no-video",
             f"--start={int(start)}",
+            f"--volume={volume}",
+            f"--input-ipc-server={self.ipc_path}",
             url,
         ]
         
@@ -60,6 +69,22 @@ class MPVPlayer:
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             
         self.proc = subprocess.Popen(cmd, **kwargs)
+
+    def set_volume(self, volume: int):
+        command = {"command": ["set_property", "volume", volume]}
+        payload = json.dumps(command) + "\n"
+        try:
+            if sys.platform == "win32":
+                with open(self.ipc_path, "w") as f:
+                    f.write(payload)
+                    f.flush()
+            else:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.connect(self.ipc_path)
+                s.sendall(payload.encode())
+                s.close()
+        except Exception:
+            pass
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -128,6 +153,8 @@ class SearchResultItem(ListItem):
 
 # ── VauxApp ────────────────────────────────────────────────────────────────
 class VauxApp(App):
+    theme = "dracula"  # Built-in themes: dracula, nord, monokai, tokyo-night, textual-dark
+
     CSS = """
     Screen {
         layout: vertical;
@@ -145,7 +172,7 @@ class VauxApp(App):
     }
 
     #right {
-        width: 80;
+        width: 50;
         layout: vertical;
     }
 
@@ -206,6 +233,9 @@ class VauxApp(App):
         Binding("ctrl+u", "vote_up", "Vote ▲", show=False),
         Binding("ctrl+d", "vote_down", "Vote ▼", show=False),
         Binding("ctrl+o", "toggle_playback", "Play/Pause", show=True),
+        Binding("ctrl+n", "skip_track", "Skip ▶", show=True),
+        Binding("-", "volume_down", "Vol -", show=True),
+        Binding("=", "volume_up", "Vol +", show=True),
     ]
 
     def __init__(self, room_id: str, username: str, server_url: str):
@@ -222,18 +252,25 @@ class VauxApp(App):
         self.playback = PlaybackState()
         self.search_results: list[SearchResult] = []
         self.last_video_id = None
+        self.player_running = False
+        self.stream_cache: dict[str, str] = {}
+        self.volume = 100
 
         mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
         
         # 1. Try to find mpv installed globally on the user's system
         if shutil.which(mpv_exe):
-            self.player = MPVPlayer(mpv_exe)
+            self.player = MPVPlayer(shutil.which(mpv_exe))
         else:
             # 2. Fallback to local dev vendor folder
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            mpv_path = os.path.join(base_dir, "vendor", "mpv", mpv_exe)
+            vendor_dir = os.path.join(base_dir, "vendor", "mpv")
+            mpv_path = os.path.join(vendor_dir, mpv_exe)
+            
             if os.path.exists(mpv_path):
                 self.player = MPVPlayer(mpv_path)
+            else:
+                self.player = None
 
     # ── layout ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -364,6 +401,7 @@ class VauxApp(App):
         if getattr(self, "player", None) and self.player.proc:
             if self.player.proc.poll() is not None:
                 self.player.proc = None
+                self.player_running = False
                 asyncio.create_task(self._trigger_ended())
 
     async def _apply_playback(self):
@@ -375,22 +413,31 @@ class VauxApp(App):
         if not s.video_id:
             self.player.stop()
             self.last_video_id = None
+            self.player_running = False
             return
             
-        # PLAY NEW TRACK (OR RESUME PAUSED)
-        if s.video_id != self.last_video_id and s.is_playing:
-            stream_url = await get_stream_url(self.server_url, s.video_id)
+        # Needs to play/resume if it's a new track OR it was paused locally
+        needs_play = s.is_playing and (s.video_id != self.last_video_id or not self.player_running)
+
+        if needs_play:
+            stream_url = self.stream_cache.get(s.video_id)
+            if not stream_url:
+                stream_url = await get_stream_url(self.server_url, s.video_id)
+                if stream_url:
+                    self.stream_cache[s.video_id] = stream_url
+
             if stream_url:
                 target_pos = s.synced_position()
-                self.player.play(stream_url, start=target_pos)
+                self.player.play(stream_url, start=target_pos, volume=self.volume)
                 self.last_video_id = s.video_id
+                self.player_running = True
             else:
                 self._post_system("Failed to load stream for track.")
                 await self._trigger_ended()
 
-        if not s.is_playing:
+        elif not s.is_playing and self.player_running:
             self.player.stop()
-            self.last_video_id = None
+            self.player_running = False
 
     async def _trigger_ended(self):
         """Tells the server the track finished so it can auto-play the next queue item."""
@@ -495,3 +542,23 @@ class VauxApp(App):
         else:
             await self.socket.play(self.room_id, current_pos)
             self._post_system("resumed playback")
+
+    async def action_skip_track(self):
+        if not self.is_host:
+            self._post_system("Only the host can skip tracks.")
+            return
+        if self.playback.video_id:
+            self._post_system("Skipped track.")
+            await self._trigger_ended()
+
+    def action_volume_down(self):
+        self.volume = max(0, self.volume - 10)
+        if getattr(self, "player", None):
+            self.player.set_volume(self.volume)
+        self._post_system(f"Volume: {self.volume}%")
+
+    def action_volume_up(self):
+        self.volume = min(100, self.volume + 10)
+        if getattr(self, "player", None):
+            self.player.set_volume(self.volume)
+        self._post_system(f"Volume: {self.volume}%")
