@@ -17,12 +17,16 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// ── health check ──
+// ─────────────────────────────
+// HEALTH
+// ─────────────────────────────
 app.get("/health", (req, res) => {
   res.json({ status: "ok", project: "vaux" });
 });
 
-// ── youtube search ──
+// ─────────────────────────────
+// YOUTUBE SEARCH
+// ─────────────────────────────
 app.get("/youtube/search", async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: "query required" });
@@ -31,7 +35,7 @@ app.get("/youtube/search", async (req, res) => {
     const url = new URL("https://www.googleapis.com/youtube/v3/search");
     url.searchParams.set("part", "snippet");
     url.searchParams.set("type", "video");
-    url.searchParams.set("videoCategoryId", "10"); // music category
+    url.searchParams.set("videoCategoryId", "10");
     url.searchParams.set("maxResults", "8");
     url.searchParams.set("q", q);
     url.searchParams.set("key", process.env.YOUTUBE_API_KEY);
@@ -58,22 +62,10 @@ app.get("/youtube/search", async (req, res) => {
   }
 });
 
-// ── in-memory room state (db comes later) ──
+// ─────────────────────────────
+// IN-MEMORY ROOMS
+// ─────────────────────────────
 const rooms = {};
-
-// ── getRoom ──
-// Lazily creates a room with empty queue + playback state.
-function getRoom(roomId) {
-  if (!rooms[roomId]) {
-    rooms[roomId] = {
-      id: roomId,
-      members: [],
-      queue: [],
-      playbackState: emptyPlaybackState(),
-    };
-  }
-  return rooms[roomId];
-}
 
 function emptyPlaybackState() {
   return {
@@ -86,6 +78,18 @@ function emptyPlaybackState() {
     isPlaying: false,
     updatedAt: Date.now(),
   };
+}
+
+function getRoom(roomId) {
+  if (!rooms[roomId]) {
+    rooms[roomId] = {
+      id: roomId,
+      members: [],
+      queue: [],
+      playbackState: emptyPlaybackState(),
+    };
+  }
+  return rooms[roomId];
 }
 
 function getMember(room, userId) {
@@ -102,8 +106,6 @@ function broadcastPlaybackState(roomId) {
   io.to(roomId).emit("playback:state", room.playbackState);
 }
 
-// ── setPlaybackFromTrack ──
-// Starts a queue item from t=0, playing; used when host picks a track or auto-advance fires.
 function setPlaybackFromTrack(room, track) {
   room.playbackState = {
     videoId: track.videoId,
@@ -117,8 +119,6 @@ function setPlaybackFromTrack(room, track) {
   };
 }
 
-// ── advanceToNextTrack ──
-// Called when the current video ends. Plays the next queued item or clears playback.
 function advanceToNextTrack(room, roomId) {
   if (room.queue.length === 0) {
     room.playbackState = emptyPlaybackState();
@@ -126,24 +126,32 @@ function advanceToNextTrack(room, roomId) {
     broadcastPlaybackState(roomId);
     return;
   }
+
   const nextItem = room.queue.shift();
   setPlaybackFromTrack(room, nextItem);
+
   io.to(roomId).emit("queue:updated", { queue: room.queue });
   io.to(roomId).emit("playback:track_ended", { nextItem });
+
   broadcastPlaybackState(roomId);
 }
 
-// ── socket.io connection ──
-// All real-time room events: join, queue, chat, and host-only playback control.
+// ─────────────────────────────
+// SOCKETS
+// ─────────────────────────────
 io.on("connection", (socket) => {
   console.log(`[socket] connected: ${socket.id}`);
 
+  // ── JOIN ROOM ──
   socket.on("room:join", ({ roomId, userId, username }) => {
     const room = getRoom(roomId);
+
     socket.join(roomId);
     socket.data = { roomId, userId, username };
 
-    if (!room.members.find((m) => m.userId === userId)) {
+    const existing = room.members.find((m) => m.userId === userId);
+
+    if (!existing) {
       room.members.push({
         userId,
         username,
@@ -151,10 +159,10 @@ io.on("connection", (socket) => {
       });
     }
 
-    console.log(`[room] ${username} joined ${roomId}`);
-
     socket.to(roomId).emit("room:member_joined", { userId, username });
+
     const member = getMember(room, userId);
+
     socket.emit("room:joined", {
       room: { id: roomId },
       members: room.members,
@@ -164,8 +172,30 @@ io.on("connection", (socket) => {
     });
   });
 
+  // ── HOST TRANSFER ──
+  socket.on("host:transfer", ({ roomId, newHostId }) => {
+    const room = getRoom(roomId);
+
+    if (!isHost(socket, room)) return;
+
+    const currentHost = getMember(room, socket.data?.userId);
+    const newHost = room.members.find((m) => m.userId === newHostId);
+
+    if (!currentHost || !newHost) return;
+
+    currentHost.role = "listener";
+    newHost.role = "host";
+
+    io.to(roomId).emit("host:changed", {
+      newHostId: newHost.userId,
+      newHostUsername: newHost.username,
+    });
+  });
+
+  // ── QUEUE ──
   socket.on("queue:add", ({ roomId, videoId, title, channel, thumbnail }) => {
     const room = getRoom(roomId);
+
     const item = {
       id: Date.now().toString(),
       videoId,
@@ -175,32 +205,43 @@ io.on("connection", (socket) => {
       votes: 0,
       addedBy: socket.data.username,
     };
+
     room.queue.push(item);
     io.to(roomId).emit("queue:updated", { queue: room.queue });
   });
 
   socket.on("queue:vote", ({ roomId, itemId, value }) => {
     const room = getRoom(roomId);
+
     const item = room.queue.find((i) => i.id === itemId);
-    if (item) {
-      item.votes += value;
-      room.queue.sort((a, b) => b.votes - a.votes);
-      io.to(roomId).emit("queue:updated", { queue: room.queue });
-    }
+    if (!item) return;
+
+    item.votes += value;
+    room.queue.sort((a, b) => b.votes - a.votes);
+
+    io.to(roomId).emit("queue:updated", { queue: room.queue });
   });
 
+  // ── CHAT ──
   socket.on("chat:send", ({ roomId, userId, username, text }) => {
-    const message = { userId, username, text, timestamp: Date.now() };
-    io.to(roomId).emit("chat:message", message);
+    io.to(roomId).emit("chat:message", {
+      userId,
+      username,
+      text,
+      timestamp: Date.now(),
+    });
   });
 
-  // ── playback handlers (host only) ──
+  // ── PLAYBACK (HOST ONLY) ──
   socket.on("playback:play_track", ({ roomId, itemId }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;
+
     const idx = room.queue.findIndex((i) => i.id === itemId);
     if (idx === -1) return;
+
     const [item] = room.queue.splice(idx, 1);
+
     setPlaybackFromTrack(room, item);
     io.to(roomId).emit("queue:updated", { queue: room.queue });
     broadcastPlaybackState(roomId);
@@ -209,47 +250,73 @@ io.on("connection", (socket) => {
   socket.on("playback:play", ({ roomId, positionSeconds }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;
-    room.playbackState.positionSeconds = positionSeconds;
+
     room.playbackState.isPlaying = true;
+    room.playbackState.positionSeconds = positionSeconds;
     room.playbackState.updatedAt = Date.now();
+
     broadcastPlaybackState(roomId);
   });
 
   socket.on("playback:pause", ({ roomId, positionSeconds }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;
-    room.playbackState.positionSeconds = positionSeconds;
+
     room.playbackState.isPlaying = false;
+    room.playbackState.positionSeconds = positionSeconds;
     room.playbackState.updatedAt = Date.now();
+
     broadcastPlaybackState(roomId);
   });
 
   socket.on("playback:seek", ({ roomId, positionSeconds }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;
+
     room.playbackState.positionSeconds = positionSeconds;
     room.playbackState.updatedAt = Date.now();
+
     broadcastPlaybackState(roomId);
   });
 
   socket.on("playback:ended", ({ roomId }) => {
     const room = getRoom(roomId);
     if (!isHost(socket, room)) return;
+
     advanceToNextTrack(room, roomId);
   });
 
+  // ── DISCONNECT ──
   socket.on("disconnect", () => {
     const { roomId, userId } = socket.data || {};
-    if (roomId && rooms[roomId]) {
-      rooms[roomId].members = rooms[roomId].members.filter(
-        (m) => m.userId !== userId,
-      );
-      socket.to(roomId).emit("room:member_left", { userId });
+    const room = rooms[roomId];
+
+    if (!room) return;
+
+    const leaving = room.members.find((m) => m.userId === userId);
+    const wasHost = leaving?.role === "host";
+
+    room.members = room.members.filter((m) => m.userId !== userId);
+
+    socket.to(roomId).emit("room:member_left", { userId });
+
+    if (wasHost && room.members.length > 0) {
+      const newHost = room.members[0];
+      newHost.role = "host";
+
+      io.to(roomId).emit("host:changed", {
+        newHostId: newHost.userId,
+        newHostUsername: newHost.username,
+      });
     }
+
     console.log(`[socket] disconnected: ${socket.id}`);
   });
 });
 
+// ─────────────────────────────
+// START SERVER
+// ─────────────────────────────
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`vaux server running on http://localhost:${PORT}`);

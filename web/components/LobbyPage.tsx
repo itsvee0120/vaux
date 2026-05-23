@@ -7,11 +7,26 @@ import { decodeHTML } from "@/lib/decode-html";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { YoutubePlayer } from "@/components/YoutubePlayer";
 import Image from "next/image";
-import { CirclePlus, Play, SendHorizontal, Loader2 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import {
+  CirclePlus,
+  Play,
+  SendHorizontal,
+  Loader2,
+  Users,
+  ChevronDownIcon,
+} from "lucide-react";
 
 type LobbyPageProps = {
   roomId: string;
   username: string;
+  members: { userId: string; username: string; role: string }[];
+  onTransferHost: (userId: string) => void;
   isHost: boolean;
   queue: Track[];
   messages: Message[];
@@ -37,6 +52,8 @@ type LobbyPageProps = {
 export function LobbyPage({
   roomId,
   username,
+  members,
+  onTransferHost,
   isHost,
   queue,
   messages,
@@ -238,6 +255,42 @@ export function LobbyPage({
 
         {/* Queue Components Start Here */}
         <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:border-t-0 lg:border-l">
+          {/* Host Components Start Here */}
+          {isHost && members.filter((m) => m.role !== "host").length > 0 && (
+            <div className="border-b border-vaux-green-dark p-3">
+              <DropdownMenu>
+                <DropdownMenuTrigger className="flex items-center gap-2 text-xs uppercase tracking-widest text-vaux-green hover:text-vaux-light cursor-pointer w-full">
+                  <Users size={12} />
+                  listeners ({members.filter((m) => m.role !== "host").length})
+                  <ChevronDownIcon className="ml-auto" />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  className="bg-zinc-900 border border-vaux-green-dark p-2 flex flex-col gap-1 min-w-48"
+                  align="start"
+                >
+                  {members
+                    .filter((m) => m.role !== "host")
+                    .map((m) => (
+                      <div
+                        key={m.userId}
+                        className="flex items-center justify-between px-1 py-1"
+                      >
+                        <span className="text-xs text-vaux-light">
+                          {m.username}
+                        </span>
+                        <button
+                          onClick={() => onTransferHost(m.userId)}
+                          className="text-xs text-vaux-green-dark hover:text-vaux-green cursor-pointer transition-colors"
+                        >
+                          make host
+                        </button>
+                      </div>
+                    ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto p-3">
             <p className="mb-2 text-xs uppercase tracking-widest text-vaux-green">
               queue

@@ -2,10 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import { getSocket } from "@/lib/socket";
-import {
-  type PlaybackState,
-  EMPTY_PLAYBACK,
-} from "@/lib/playback";
+import { type PlaybackState, EMPTY_PLAYBACK } from "@/lib/playback";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { LoginPage } from "@/components/LoginPage";
 import { LobbyPage } from "@/components/LobbyPage";
@@ -18,6 +15,9 @@ export default function Home() {
   const [screen, setScreen] = useState<"lobby" | "room">("lobby");
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
+  const [members, setMembers] = useState<
+    { userId: string; username: string; role: string }[]
+  >([]);
   const [isHost, setIsHost] = useState(false);
   const [queue, setQueue] = useState<Track[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -27,45 +27,77 @@ export default function Home() {
   const [searching, setSearching] = useState(false);
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
+  const usernameRef = useRef(username);
+  useEffect(() => {
+    usernameRef.current = username;
+  }, [username]);
   useEffect(() => {
     const socket = getSocket();
+
     socket.on("connect", () => {});
-    socket.on("room:joined", ({ queue, playbackState, role }) => {
-      setQueue(queue);
-      setPlayback(playbackState ?? EMPTY_PLAYBACK);
-      setIsHost(role === "host");
-      setScreen("room");
-    });
-    socket.on("room:member_joined", ({ username }) => {
+
+    socket.on(
+      "room:joined",
+      ({ queue, playbackState, role, members: initialMembers }) => {
+        setQueue(queue);
+        setPlayback(playbackState ?? EMPTY_PLAYBACK);
+        setIsHost(role === "host");
+        setMembers(initialMembers ?? []);
+        setScreen("room");
+      },
+    );
+
+    socket.on("room:member_joined", ({ userId, username: joinedUsername }) => {
+      setMembers((prev) =>
+        prev.find((m) => m.userId === userId)
+          ? prev
+          : [...prev, { userId, username: joinedUsername, role: "listener" }],
+      );
       setMessages((p) => [
         ...p,
-        { username: "", text: `${username} joined`, system: true },
+        { username: "", text: `${joinedUsername} joined`, system: true },
       ]);
     });
+
     socket.on("room:member_left", ({ userId }) => {
+      setMembers((prev) => prev.filter((m) => m.userId !== userId));
       setMessages((p) => [
         ...p,
         { username: "", text: `${userId} left`, system: true },
       ]);
     });
+
+    socket.on("host:changed", ({ newHostId }) => {
+      setIsHost(newHostId === username);
+      setMembers((prev) =>
+        prev.map((m) => ({
+          ...m,
+          role: m.userId === newHostId ? "host" : "listener",
+        })),
+      );
+    });
+
     socket.on("queue:updated", ({ queue }) => setQueue(queue));
+
     socket.on("playback:state", (state: PlaybackState) => {
       setPlayback(state);
     });
-    socket.on("chat:message", ({ username, text }) => {
-      setMessages((p) => [...p, { username, text }]);
+
+    socket.on("chat:message", ({ username: msgUsername, text }) => {
+      setMessages((p) => [...p, { username: msgUsername, text }]);
     });
+
     return () => {
       socket.off("connect");
       socket.off("room:joined");
       socket.off("room:member_joined");
       socket.off("room:member_left");
+      socket.off("host:changed");
       socket.off("queue:updated");
       socket.off("playback:state");
       socket.off("chat:message");
     };
-  }, []);
+  }, [username]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -143,6 +175,10 @@ export default function Home() {
     setChatInput("");
   }
 
+  function transferHost(newHostId: string) {
+    getSocket().emit("host:transfer", { roomId, newHostId });
+  }
+
   if (screen === "lobby") {
     return (
       <LoginPage
@@ -159,6 +195,8 @@ export default function Home() {
     <LobbyPage
       roomId={roomId}
       username={username}
+      members={members}
+      onTransferHost={transferHost}
       isHost={isHost}
       queue={queue}
       messages={messages}
