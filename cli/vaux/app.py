@@ -471,11 +471,11 @@ class VauxApp(App):
 
         mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
         
-        # 1. Try to find mpv installed globally on the user's system
+        # Try to find mpv installed globally on the user's system
         if shutil.which(mpv_exe):
             self.player = MPVPlayer(shutil.which(mpv_exe))
         else:
-            # 2. Fallback to user data folder
+            # Fallback to user data folder
             vendor_dir = os.path.expanduser("~/.vaux/mpv")
             mpv_path = os.path.join(vendor_dir, mpv_exe)
             

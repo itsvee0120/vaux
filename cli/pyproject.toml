@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vaux-cli"
-version = "0.1.14"
+version = "0.1.24"
 description = "A terminal client for vaux listening rooms."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -15,7 +15,6 @@ dependencies = [
     "httpx",
     "aiohttp",
     "websockets",
-    "py7zr ; sys_platform == 'win32'",   # only needed on Windows
 ]
 
 [project.scripts]

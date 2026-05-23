@@ -106,7 +106,7 @@ app.get("/youtube/stream-url", async (req, res) => {
       "--get-url",
       "--no-warnings",
       "--extractor-args",
-      "youtube:player_client=android",
+      "youtube:player_client=tv",
       `https://www.youtube.com/watch?v=${videoId}`,
     ]);
 
@@ -403,6 +403,17 @@ async function initializeServer() {
   }
 
   ytdlp = new YTDlpWrap(binaryPath);
+
+  // Always update yt-dlp to latest on startup
+  if (fs.existsSync(binaryPath)) {
+    console.log("[setup] Updating yt-dlp...");
+    try {
+      await ytdlp.execPromise(["--update-to", "stable"]);
+      console.log("[setup] yt-dlp updated.");
+    } catch (e) {
+      console.warn("[setup] yt-dlp update failed (continuing):", e.message);
+    }
+  }
 
   server.listen(PORT, () => {
     console.log(`vaux server running on http://localhost:${PORT}`);
