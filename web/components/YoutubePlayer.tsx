@@ -237,6 +237,7 @@ export function YoutubePlayer({
     if (!showBlockedOverlay) return;
 
     const unlockAudio = () => {
+      lastVideoId.current = null; // Force a fresh load with the user gesture
       applyPlayback(playbackRef.current);
       setShowBlockedOverlay(false);
     };
@@ -265,6 +266,7 @@ export function YoutubePlayer({
           <button
             className="cursor-pointer rounded-full bg-vaux-green px-6 py-3 font-bold text-black shadow-lg transition-transform hover:scale-105 active:scale-95"
             onClick={() => {
+              lastVideoId.current = null; // Force a fresh load with the user gesture
               applyPlayback(playbackRef.current);
               setShowBlockedOverlay(false);
             }}
