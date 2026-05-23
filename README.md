@@ -2,6 +2,8 @@
 
 A real-time music listening room - join a room, build a queue together, vote on tracks, and listen in sync. Available as both a web app and a terminal CLI.
 
+### 🌐 Live Demo: https://vaux-ten.vercel.app/
+
 ---
 
 ## What it does
@@ -10,13 +12,17 @@ A real-time music listening room - join a room, build a queue together, vote on 
 - Search YouTube and add tracks to a shared queue
 - Vote tracks up or down — the queue re-sorts in real time for everyone
 - Synchronized playback — everyone in the room hears the same track at the same timestamp
+- Host controls: Play, pause, seek, skip tracks, and transfer host privileges
 - Live chat and emoji reactions alongside the music
+- Local volume controls for all users (Web and CLI)
 
 ---
 
 ## Architecture
 
 One backend, two clients. The real-time sync logic is written once and consumed by both the web app and the CLI over the same Socket.io event contract.
+
+**Zero-Quota Streaming:** The Node.js server centrally runs `yt-dlp` to dynamically scrape YouTube search results and extract direct audio stream URLs. This completely eliminates the need for YouTube API keys, Google daily quotas, client-side browser cookies, and local `yt-dlp` binaries!
 
 ```
 vaux/
@@ -26,51 +32,50 @@ vaux/
 ```
 
 ```
-┌─────────────────────┐     ┌─────────────────────┐
-│   Web client        │     │   CLI client         │
-│   Next.js + React   │     │   Python + textual   │
-└────────┬────────────┘     └──────────┬───────────┘
-         │  Socket.io + REST           │  python-socketio
-         └──────────────┬──────────────┘
-                        │
-           ┌────────────▼────────────┐
-           │     Shared backend      │
-           │  Node.js + Express      │
-           │  Socket.io server       │
-           └────────────┬────────────┘
-                        │
-           ┌────────────▼────────────┐
-           │       PostgreSQL        │
-           │  users, rooms, queue,   │
-           │  votes, chat history    │
-           └─────────────────────────┘
+                ┌─────────────────────┐
+                │     YouTube         │
+                └──────────┬──────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │   yt-dlp (Server)   │
+                │ Search              │
+                │ Metadata            │
+                │ Stream Extraction   │
+                └──────────┬──────────┘
+                           │
+         ┌─────────────────┴─────────────────┐
+         │                                   │
+         ▼                                   ▼
+┌─────────────────┐               ┌─────────────────┐
+│   Web Client    │               │   CLI Client    │
+│ IFrame Player   │               │ mpv Player      │
+└─────────────────┘               └─────────────────┘
 ```
 
 ---
 
 ## Socket.io event contract
 
-| Event                  | Direction       | Payload                                                     |
-| ---------------------- | --------------- | ----------------------------------------------------------- |
-| `room:join`            | Client → Server | `{ roomId, userId, username }`                              |
-| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState, role }`         |
-| `room:member_joined`   | Server → Client | `{ userId, username, role }`                                |
-| `room:member_left`     | Server → Client | `{ userId }`                                                |
-| `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }` |
-| `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                 |
-| `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`              |
-| `playback:play_track`  | Client → Server | `{ roomId, itemId }` — host only; starts queue item         |
-| `playback:play`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:pause`       | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
-| `playback:seek`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                |
+| Event                  | Direction       | Payload                                                        |
+| ---------------------- | --------------- | -------------------------------------------------------------- |
+| `room:join`            | Client → Server | `{ roomId, userId, username }`                                 |
+| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState, role }`            |
+| `room:member_joined`   | Server → Client | `{ userId, username, role }`                                   |
+| `room:member_left`     | Server → Client | `{ userId }`                                                   |
+| `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }`    |
+| `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                    |
+| `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`                 |
+| `playback:play_track`  | Client → Server | `{ roomId, itemId }` — host only; starts queue item            |
+| `playback:play`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
+| `playback:pause`       | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
+| `playback:seek`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
 | `playback:state`       | Server → Client | `{ videoId, positionSeconds, isPlaying, updatedAt, ...track }` |
-| `playback:ended`       | Client → Server | `{ roomId }` — host only; auto-plays next queue item          |
-| `playback:track_ended` | Server → Client | `{ nextItem \| null }`                                      |
-| `chat:send`            | Client → Server | `{ roomId, userId, username, text }`                        |
-| `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                     |
-| `reaction:send`        | Client → Server | `{ roomId, emoji }`                                         |
-| `reaction:broadcast`   | Server → Client | `{ userId, emoji }`                                         |
-|                        |
+| `playback:ended`       | Client → Server | `{ roomId }` — host only; auto-plays next queue item           |
+| `playback:track_ended` | Server → Client | `{ nextItem \| null }`                                         |
+| `chat:send`            | Client → Server | `{ roomId, userId, username, text }`                           |
+| `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                        |
+| `reaction:send`        | Client → Server | `{ roomId, emoji }`                                            |
 
 ### Sync formula
 
@@ -85,14 +90,14 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 ## Tech stack
 
-| Layer        | Technology                                                         |
-| ------------ | ------------------------------------------------------------------ |
-| Web frontend | Next.js 16, React, Tailwind CSS, TypeScript                        |
-| CLI frontend | Python 3.12, textual, python-socketio                              |
-| Backend      | Node.js, Express, Socket.io                                        |
-| Database     | PostgreSQL                                                         |
-| Music source | YouTube Data API v3 (search), YouTube IFrame Player API (playback) |
-| Hosting      | Vercel (web), Render (server)                                      |
+| Layer        | Technology                                                                    |
+| ------------ | ----------------------------------------------------------------------------- |
+| Web frontend | Next.js 16, React, Tailwind CSS, TypeScript                                   |
+| CLI frontend | Python 3.12, textual, python-socketio                                         |
+| Backend      | Node.js, Express, Socket.io                                                   |
+| Database     | In-memory (Currently)                                                         |
+| Music source | `yt-dlp` (backend extraction & search), YouTube IFrame API (web), `mpv` (CLI) |
+| Hosting      | Vercel (web), Render (server)                                                 |
 
 ---
 
@@ -102,7 +107,6 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 - Node.js v18+
 - Python 3.11+
-- PostgreSQL
 
 ### 1. Clone the repo
 
@@ -150,8 +154,6 @@ python main.py join my-room --username yourname
 
 ```
 PORT=4000
-DATABASE_URL=postgresql://user:password@localhost:5432/vaux
-YOUTUBE_API_KEY=your_youtube_data_api_v3_key
 ```
 
 ### web/.env.local
@@ -162,41 +164,29 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 
 ---
 
-## Database schema
-
-| Table            | Purpose                               |
-| ---------------- | ------------------------------------- |
-| `users`          | Registered users                      |
-| `rooms`          | Jam rooms with invite codes           |
-| `room_members`   | Who is in which room, with role       |
-| `queue_items`    | Songs in each room's queue            |
-| `votes`          | Up/down votes per user per queue item |
-| `playback_state` | Current track + position per room     |
-
----
-
 ## Roles
 
 | Role     | Can do                                              |
 | -------- | --------------------------------------------------- |
 | Host     | Everything — play, pause, seek, skip, remove tracks |
-| DJ       | Add tracks, vote, control playback                  |
 | Listener | Add tracks, vote, chat                              |
 
 ---
 
 ## Roadmap
 
-- Real-time rooms and chat
-- YouTube search and shared queue
-- Synchronized playback
-- Voting system
-- Roles (Host / DJ / Listener)
-- Emoji reactions
-- Song history
-- Public room discovery
-- AI playlist seeding from room vibe
-- CLI installable via `pip install vaux-cli`
+(X = done, - = in progress)
+
+[x] Real-time rooms and chat
+[x] YouTube search and shared queue
+[x] Synchronized playback
+[x] Voting system
+[-] Roles (Host / DJ / Listener)
+[ ] Emoji reactions
+[ ] Song history
+[ ] Public room discovery
+[ ] AI playlist seeding from room vibe
+[ ] CLI installable via `pip install vaux-cli`
 
 ---
 
