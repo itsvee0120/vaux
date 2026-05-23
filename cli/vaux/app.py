@@ -31,7 +31,7 @@ from rich.text import Text
 
 from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
-from vaux.api import search_youtube, SearchResult
+from vaux.api import search_youtube, SearchResult, get_stream_url
 
 import subprocess
 
@@ -40,43 +40,20 @@ class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
         self.proc = None
-        self.mpv_dir = os.path.dirname(path)
-        self.log_fd = open(os.path.join(self.mpv_dir, "mpv_debug.log"), "w")
-
-        # Auto-update yt-dlp in the background so it never goes out of date again
-        yt_exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
-        yt_path = os.path.join(self.mpv_dir, yt_exe)
-        if os.path.exists(yt_path):
-            subprocess.Popen([yt_path, "-U"], cwd=self.mpv_dir, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def play(self, url: str, start: float = 0.0):
         self.stop()
         
-        cookies_path = os.path.join(self.mpv_dir, "cookies.txt")
-        if os.path.exists(cookies_path):
-            # Use relative path since cwd is already mpv_dir; prevents parsing errors on Windows paths
-            ytdl_opts = "cookies=cookies.txt,extractor-args=youtube:player_client=android"
-        else:
-            ytdl_opts = "cookies-from-browser=opera,extractor-args=youtube:player_client=android"
-
-        yt_exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
-
         cmd = [
             self.path,
             "--no-video",
-            "--ytdl=yes",
-            "--ytdl-format=bestaudio/best",
-            f"--script-opts=ytdl_hook-ytdl_path={yt_exe}",
-            f"--ytdl-raw-options={ytdl_opts}",
             f"--start={int(start)}",
-            "--msg-level=ytdl_hook=trace",
             url,
         ]
         
         kwargs = {
-            "cwd": self.mpv_dir,
-            "stdout": self.log_fd,
-            "stderr": subprocess.STDOUT,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
@@ -309,7 +286,7 @@ class VauxApp(App):
         self.playback = PlaybackState.from_dict(pb)
         await self._refresh_queue()
         self._refresh_now_playing()
-        self._apply_playback()
+        await self._apply_playback()
         self._post_system(f"joined [{self.role}]")
         if not getattr(self, "player", None):
             self._post_system("mpv executable not found in vendor/mpv. Audio playback is disabled.")
@@ -337,7 +314,7 @@ class VauxApp(App):
     async def _on_playback_state(self, data: dict):
         self.playback = PlaybackState.from_dict(data)
         self._refresh_now_playing()
-        self._apply_playback()
+        await self._apply_playback()
 
     async def _on_chat_message(self, data: dict):
         uname = data.get("username", "?")
@@ -382,7 +359,7 @@ class VauxApp(App):
                 self.player.proc = None
                 asyncio.create_task(self._trigger_ended())
 
-    def _apply_playback(self):
+    async def _apply_playback(self):
         """Syncs the python-mpv player instance with the server playback state."""
         if not getattr(self, "player", None):
             return
@@ -395,9 +372,14 @@ class VauxApp(App):
             
         # PLAY NEW TRACK (OR RESUME PAUSED)
         if s.video_id != self.last_video_id and s.is_playing:
-            target_pos = s.synced_position()
-            self.player.play(f"https://youtu.be/{s.video_id}", start=target_pos)
-            self.last_video_id = s.video_id
+            stream_url = await get_stream_url(self.server_url, s.video_id)
+            if stream_url:
+                target_pos = s.synced_position()
+                self.player.play(stream_url, start=target_pos)
+                self.last_video_id = s.video_id
+            else:
+                self._post_system("Failed to load stream for track.")
+                await self._trigger_ended()
 
         if not s.is_playing:
             self.player.stop()
