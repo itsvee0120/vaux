@@ -32,3 +32,15 @@ async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
         )
         for r in data.get("results", [])
     ]
+
+
+async def get_stream_url(server_url: str, video_id: str) -> str | None:
+    """Hits the server-side yt-dlp proxy to get a direct audio stream URL."""
+    url = f"{server_url}/youtube/stream-url"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url, params={"videoId": video_id}, timeout=15.0)
+            resp.raise_for_status()
+            return resp.json().get("streamUrl")
+        except Exception:
+            return None

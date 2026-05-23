@@ -120,26 +120,35 @@ export function LobbyPage({
                   <p className="text-xs text-vaux-green">
                     {nowPlaying!.channel}
                   </p>
-                  {isHost && (
-                    <div className="mt-3 flex items-center gap-2">
-                      <button
-                        type="button"
-                        className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
-                        onClick={() =>
-                          playback.isPlaying
-                            ? onPause(syncedPosition)
-                            : onPlay(syncedPosition)
-                        }
-                      >
-                        {playback.isPlaying ? "pause" : "play"}
-                      </button>
-                      <input
-                        type="range"
-                        min={0}
-                        max={600}
-                        step={0.5}
-                        value={seekValue}
-                        className="flex-1 rounded-full h-1 appearance-none transition-all outline-none cursor-pointer focus:outline-none
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    {isHost && (
+                      <>
+                        <button
+                          type="button"
+                          className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
+                          onClick={() =>
+                            playback.isPlaying
+                              ? onPause(syncedPosition)
+                              : onPlay(syncedPosition)
+                          }
+                        >
+                          {playback.isPlaying ? "pause" : "play"}
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
+                          onClick={onEnded}
+                          title="Skip track"
+                        >
+                          skip ▶
+                        </button>
+                        <input
+                          type="range"
+                          min={0}
+                          max={600}
+                          step={0.5}
+                          value={seekValue}
+                          className="flex-1 rounded-full h-1 appearance-none transition-all outline-none cursor-pointer focus:outline-none
                           [&::-webkit-slider-runnable-track]:bg-vaux-light/20
                           [&::-webkit-slider-runnable-track]:rounded-full
                           [&::-webkit-slider-runnable-track]:cursor-pointer
@@ -165,21 +174,22 @@ export function LobbyPage({
                           [&::-moz-range-thumb]:rounded-full
                           [&::-moz-range-thumb]:border-2
                           [&::-moz-range-thumb]:border-vaux-green"
-                        onPointerDown={() => {
-                          setIsSeeking(true);
-                          setSeekUi(syncedPosition);
-                        }}
-                        onChange={(e) => setSeekUi(Number(e.target.value))}
-                        onPointerUp={(e) => {
-                          onSeek(Number(e.currentTarget.value));
-                          setIsSeeking(false);
-                        }}
-                      />
-                      <span className="w-10 text-right text-xs tabular-nums text-vaux-light">
-                        {Math.floor(seekValue)}s
-                      </span>
-                    </div>
-                  )}
+                          onPointerDown={() => {
+                            setIsSeeking(true);
+                            setSeekUi(syncedPosition);
+                          }}
+                          onChange={(e) => setSeekUi(Number(e.target.value))}
+                          onPointerUp={(e) => {
+                            onSeek(Number(e.currentTarget.value));
+                            setIsSeeking(false);
+                          }}
+                        />
+                        <span className="w-10 text-right text-xs tabular-nums text-vaux-light">
+                          {Math.floor(seekValue)}s
+                        </span>
+                      </>
+                    )}
+                  </div>
                   {!isHost && playback.isPlaying && (
                     <p className="mt-2 text-xs text-zinc-600">
                       synced · {Math.floor(syncedPosition)}s
@@ -234,6 +244,7 @@ export function LobbyPage({
                         src={r.thumbnail}
                         alt=""
                         fill
+                        sizes="80px"
                         className="rounded object-cover"
                       />
                     </div>
@@ -311,6 +322,7 @@ export function LobbyPage({
                         src={track.thumbnail}
                         alt=""
                         fill
+                        sizes="48px"
                         className="rounded object-cover"
                       />
                     </div>

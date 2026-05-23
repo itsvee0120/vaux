@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vaux-cli"
+version = "0.1.0"
+description = "A terminal client for vaux listening rooms."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click",
+    "textual",
+    "python-socketio",
+    "httpx",
+    "aiohttp",
+    "websockets"
+]
+
+[project.scripts]
+# This creates the global terminal command `vaux` and points it to cli() in main.py
+vaux = "main:cli"
+
+[tool.setuptools]
+packages = ["vaux"]
+# Packages main.py so the script entrypoint can find it
+py-modules = ["main"]

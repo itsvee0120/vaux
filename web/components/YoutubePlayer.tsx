@@ -91,9 +91,22 @@ export function YoutubePlayer({
   const lastVideoId = useRef<string | null>(null);
   const playbackRef = useRef(playback);
 
+  // Store volatile props in refs so we don't have to recreate the player when they change
+  const isHostRef = useRef(isHost);
+  const onPlayRef = useRef(onPlay);
+  const onPauseRef = useRef(onPause);
+  const onEndedRef = useRef(onEnded);
+
   useEffect(() => {
     playbackRef.current = playback;
   }, [playback]);
+
+  useEffect(() => {
+    isHostRef.current = isHost;
+    onPlayRef.current = onPlay;
+    onPauseRef.current = onPause;
+    onEndedRef.current = onEnded;
+  }, [isHost, onPlay, onPause, onEnded]);
 
   // ── applyPlayback ──
   // Seeks or loads the video to match server state. Sets applyingRemote so host
@@ -139,8 +152,8 @@ export function YoutubePlayer({
         width: "100%",
         playerVars: {
           autoplay: 0,
-          controls: isHost ? 1 : 0,
-          disablekb: isHost ? 0 : 1,
+          controls: 1, // Always enabled; pointer-events-none handles locking it for listeners
+          disablekb: 0,
           modestbranding: 1,
           rel: 0,
         },
@@ -150,12 +163,18 @@ export function YoutubePlayer({
             applyPlayback(playbackRef.current);
           },
           onStateChange: (event) => {
-            if (!isHost || applyingRemote.current || !playerRef.current) return;
+            if (
+              !isHostRef.current ||
+              applyingRemote.current ||
+              !playerRef.current
+            )
+              return;
             const YT = window.YT!;
             const t = playerRef.current.getCurrentTime();
-            if (event.data === YT.PlayerState.PLAYING) onPlay(t);
-            else if (event.data === YT.PlayerState.PAUSED) onPause(t);
-            else if (event.data === YT.PlayerState.ENDED) onEnded();
+            if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
+            else if (event.data === YT.PlayerState.PAUSED)
+              onPauseRef.current(t);
+            else if (event.data === YT.PlayerState.ENDED) onEndedRef.current();
           },
         },
       });
@@ -167,7 +186,7 @@ export function YoutubePlayer({
       playerRef.current?.destroy();
       playerRef.current = null;
     };
-  }, [isHost, onPlay, onPause, onEnded, applyPlayback]);
+  }, [applyPlayback]);
 
   // ── playback sync ──
   // Re-applies remote state whenever the server broadcasts a new updatedAt.

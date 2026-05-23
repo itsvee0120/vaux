@@ -4,6 +4,9 @@ const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
 
+const YTDlpWrap = require("yt-dlp-wrap").default || require("yt-dlp-wrap");
+const ytdlp = new YTDlpWrap();
+
 const app = express();
 const server = http.createServer(app);
 
@@ -32,33 +35,69 @@ app.get("/youtube/search", async (req, res) => {
   if (!q) return res.status(400).json({ error: "query required" });
 
   try {
-    const url = new URL("https://www.googleapis.com/youtube/v3/search");
-    url.searchParams.set("part", "snippet");
-    url.searchParams.set("type", "video");
-    url.searchParams.set("videoCategoryId", "10");
-    url.searchParams.set("maxResults", "8");
-    url.searchParams.set("q", q);
-    url.searchParams.set("key", process.env.YOUTUBE_API_KEY);
+    const stdout = await ytdlp.execPromise([
+      `ytsearch8:${q}`,
+      "--dump-single-json",
+      "--flat-playlist",
+      "--no-warnings",
+    ]);
 
-    const response = await fetch(url.toString());
-    const data = await response.json();
+    const data = JSON.parse(stdout);
+    const entries = data.entries || [];
 
-    if (!response.ok) {
-      console.error("[youtube] API error:", data);
-      return res.status(500).json({ error: "YouTube API error", detail: data });
-    }
-
-    const results = data.items.map((item) => ({
-      videoId: item.id.videoId,
-      title: item.snippet.title,
-      channel: item.snippet.channelTitle,
-      thumbnail: item.snippet.thumbnails.medium.url,
+    const results = entries.map((item) => ({
+      videoId: item.id,
+      title: item.title,
+      channel: item.uploader || item.channel || "YouTube",
+      thumbnail:
+        item.thumbnails?.length > 0
+          ? item.thumbnails[0].url
+          : `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`,
     }));
 
     res.json({ results });
   } catch (err) {
-    console.error("[youtube] fetch error:", err);
+    console.error("[youtube] search error:", err);
     res.status(500).json({ error: "internal server error" });
+  }
+});
+
+// ─────────────────────────────
+// YOUTUBE STREAM URL RESOLVER
+// ─────────────────────────────
+const streamCache = new Map();
+
+app.get("/youtube/stream-url", async (req, res) => {
+  const { videoId } = req.query;
+  if (!videoId) return res.status(400).json({ error: "videoId required" });
+
+  if (streamCache.has(videoId)) {
+    return res.json({ streamUrl: streamCache.get(videoId) });
+  }
+
+  try {
+    const stdout = await ytdlp.execPromise([
+      "-f",
+      "bestaudio/best",
+      "--get-url",
+      "--no-warnings",
+      "--extractor-args",
+      "youtube:player_client=android",
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ]);
+
+    const streamUrl = stdout.trim();
+    if (!streamUrl)
+      return res.status(404).json({ error: "No audio stream found" });
+
+    streamCache.set(videoId, streamUrl);
+    // Expire cache after 4 hours (Google CDN URLs typically expire in ~6 hours)
+    setTimeout(() => streamCache.delete(videoId), 4 * 60 * 60 * 1000);
+
+    res.json({ streamUrl });
+  } catch (err) {
+    console.error("[ytdlp] server error:", err);
+    res.status(500).json({ error: "Failed to get stream URL" });
   }
 });
 
