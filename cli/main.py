@@ -16,7 +16,7 @@ if sys.platform == "win32":
 os.environ["PATH"] = os.path.dirname(os.path.abspath(__file__)) + os.pathsep + os.environ.get("PATH", "")
 
 import click
-from vaux.app import VauxApp
+from vaux.app import VauxApp, LobbyApp
 
 def ensure_mpv():
     """Checks for mpv and prompts Windows users to auto-download it if missing."""
@@ -63,15 +63,9 @@ def ensure_mpv():
                 click.echo(f"Failed to auto-download mpv: {e}")
 
 
-@click.group()
-def cli():
-    """vaux — listen together, in sync."""
-    pass
-
-
-@cli.command()
-@click.argument("room_id")
-@click.option("--username", "-u", required=True, help="Your display name.")
+@click.command()
+@click.argument("room_id", required=False)
+@click.option("--username", "-u", help="Your display name.")
 @click.option(
     "--server",
     default="http://localhost:4000",
@@ -79,9 +73,19 @@ def cli():
     show_default=True,
     help="vaux server URL.",
 )
-def join(room_id: str, username: str, server: str):
-    """Join a vaux room and listen together."""
+def cli(room_id: str | None, username: str | None, server: str):
+    """vaux — listen together, in sync. Run without arguments to open the interactive lobby."""
     ensure_mpv()
+
+    if not room_id or not username:
+        lobby = LobbyApp(server_url=server)
+        lobby.run()
+
+        if lobby.result is None:
+            return
+
+        room_id, username = lobby.result
+
     app = VauxApp(room_id=room_id, username=username, server_url=server)
     app.run()
 

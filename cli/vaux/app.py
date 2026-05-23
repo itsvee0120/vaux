@@ -22,6 +22,7 @@ import sys
 import shutil
 import json
 import socket
+import secrets
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
@@ -37,6 +38,35 @@ from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url
 
 import subprocess
+
+
+# ── generateRoomSlug ──────────────────────────────────────────────────────
+# Same word lists and logic as the web client so slugs look consistent
+# across both interfaces. Uses secrets.randbelow for cryptographic quality.
+
+_ADJECTIVES = [
+    "amber", "arctic", "azure", "blazing", "crimson", "crystal", "drifting",
+    "echoing", "electric", "emerald", "floating", "frozen", "golden", "hollow",
+    "indigo", "jade", "lunar", "mystic", "neon", "obsidian", "onyx", "opal",
+    "phantom", "radiant", "rusty", "sacred", "silent", "silver", "solar",
+    "spectral", "stellar", "sunken", "twilight", "velvet", "vibrant", "violet",
+    "wandering", "wild", "winter", "wooden",
+]
+
+_NOUNS = [
+    "anchor", "bloom", "canyon", "circuit", "comet", "current", "dusk",
+    "ember", "forest", "harbor", "horizon", "lantern", "melody", "mirror",
+    "mosaic", "nebula", "ocean", "orbit", "petal", "prism", "pulse", "reef",
+    "relay", "ridge", "signal", "spark", "storm", "summit", "tide", "timber",
+    "tunnel", "valley", "vinyl", "vortex", "wave", "willow", "wind", "wraith",
+    "zenith", "zephyr",
+]
+
+def generate_room_slug() -> str:
+    adj    = _ADJECTIVES[secrets.randbelow(len(_ADJECTIVES))]
+    noun   = _NOUNS[secrets.randbelow(len(_NOUNS))]
+    suffix = 10 + secrets.randbelow(90)   # two-digit suffix, 10–99
+    return f"{adj}-{noun}-{suffix}"
 
 
 class MPVPlayer:
@@ -90,6 +120,193 @@ class MPVPlayer:
         if self.proc and self.proc.poll() is None:
             self.proc.terminate()
             self.proc = None
+
+
+# ── LobbyApp ──────────────────────────────────────────────────────────────
+# Shown before VauxApp. Lets the user choose create or join, pick a name,
+# then hands off room_id + username to the caller via self.result.
+
+class LobbyApp(App):
+    """Pre-game lobby: create a room (slug) or join an existing one."""
+
+    theme = "dracula"
+
+    CSS = """
+    Screen {
+        align: center middle;
+    }
+
+    #card {
+        width: 52;
+        border: round $primary;
+        padding: 1 2;
+    }
+
+    #title {
+        text-align: center;
+        color: $success;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #slug-row {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
+    }
+
+    #slug-display {
+        width: 1fr;
+        color: $success;
+        content-align: left middle;
+        padding: 0 1;
+        border: tall $primary-darken-2;
+    }
+
+    #reroll-btn {
+        width: 10;
+        margin-left: 1;
+    }
+
+    #mode-row {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
+    }
+
+    #create-btn, #join-btn {
+        width: 1fr;
+    }
+
+    #room-input {
+        margin-bottom: 1;
+    }
+
+    #username-input {
+        margin-bottom: 1;
+    }
+
+    #go-btn {
+        width: 100%;
+    }
+
+    #hint {
+        text-align: center;
+        color: $text-muted;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("ctrl+c", "quit", "Quit"),
+        Binding("tab", "focus_next", "Next field", show=False),
+    ]
+
+    def __init__(self, server_url: str):
+        super().__init__()
+        self.server_url = server_url
+        self._mode = "create"
+        self._slug = generate_room_slug()
+        # result is set before exit so the caller can read it
+        self.result: tuple[str, str] | None = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="card"):
+            yield Label("v a u x", id="title")
+
+            # ── mode toggle ──
+            with Horizontal(id="mode-row"):
+                yield Button("create room", id="create-btn", variant="success")
+                yield Button("join room",   id="join-btn",   variant="default")
+
+            # ── create: slug display + re-roll ──
+            with Horizontal(id="slug-row"):
+                yield Label(self._slug, id="slug-display")
+                yield Button("↺ new", id="reroll-btn", variant="default")
+
+            # ── join: free-type input (hidden in create mode) ──
+            yield Input(
+                placeholder="room name (e.g. velvet-orbit-42)",
+                id="room-input",
+            )
+
+            yield Input(placeholder="your name", id="username-input")
+            yield Button("create & join →", id="go-btn", variant="success")
+            yield Label("", id="hint")
+
+        yield Footer()
+
+    def on_mount(self):
+        # Start in create mode — hide the join input
+        self._apply_mode()
+
+    def _apply_mode(self):
+        slug_row   = self.query_one("#slug-row")
+        room_input = self.query_one("#room-input", Input)
+        go_btn     = self.query_one("#go-btn", Button)
+        hint       = self.query_one("#hint", Label)
+        create_btn = self.query_one("#create-btn", Button)
+        join_btn   = self.query_one("#join-btn", Button)
+
+        if self._mode == "create":
+            slug_row.display   = True
+            room_input.display = False
+            go_btn.label       = "create & join →"
+            hint.update("")
+            create_btn.variant = "success"
+            join_btn.variant   = "default"
+        else:
+            slug_row.display   = False
+            room_input.display = True
+            go_btn.label       = "join room →"
+            hint.update("ask the host for their room name")
+            create_btn.variant = "default"
+            join_btn.variant   = "success"
+            room_input.focus()
+
+    def on_button_pressed(self, event: Button.Pressed):
+        btn_id = event.button.id
+
+        if btn_id == "create-btn":
+            self._mode = "create"
+            self._apply_mode()
+
+        elif btn_id == "join-btn":
+            self._mode = "join"
+            self._apply_mode()
+
+        elif btn_id == "reroll-btn":
+            # Generate a fresh slug and update the display
+            self._slug = generate_room_slug()
+            self.query_one("#slug-display", Label).update(self._slug)
+
+        elif btn_id == "go-btn":
+            self._submit()
+
+    def on_input_submitted(self, event: Input.Submitted):
+        # Enter in any field submits the form
+        self._submit()
+
+    def _submit(self):
+        username = self.query_one("#username-input", Input).value.strip()
+
+        if self._mode == "create":
+            room_id = self._slug
+        else:
+            room_id = self.query_one("#room-input", Input).value.strip()
+
+        hint = self.query_one("#hint", Label)
+
+        if not room_id:
+            hint.update("[red]enter a room name[/red]")
+            return
+        if not username:
+            hint.update("[red]enter your name[/red]")
+            return
+
+        self.result = (room_id, username)
+        self.exit()
+
 
 # ── NowPlaying widget ──────────────────────────────────────────────────────
 class NowPlaying(Static):
