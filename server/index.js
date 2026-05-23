@@ -3,9 +3,11 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const fs = require("fs");
+const path = require("path");
 
 const YTDlpWrap = require("yt-dlp-wrap").default || require("yt-dlp-wrap");
-const ytdlp = new YTDlpWrap();
+let ytdlp = new YTDlpWrap();
 
 const app = express();
 const server = http.createServer(app);
@@ -367,6 +369,23 @@ io.on("connection", (socket) => {
 // START SERVER
 // ─────────────────────────────
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`vaux server running on http://localhost:${PORT}`);
-});
+
+async function initializeServer() {
+  const binaryName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  const binaryPath = path.join(__dirname, binaryName);
+
+  if (!fs.existsSync(binaryPath)) {
+    console.log(`[setup] Downloading yt-dlp to ${binaryPath}...`);
+    await YTDlpWrap.downloadFromGithub(binaryPath);
+    if (process.platform !== "win32") fs.chmodSync(binaryPath, "755");
+    console.log("[setup] yt-dlp downloaded successfully.");
+  }
+
+  ytdlp = new YTDlpWrap(binaryPath);
+
+  server.listen(PORT, () => {
+    console.log(`vaux server running on http://localhost:${PORT}`);
+  });
+}
+
+initializeServer().catch(console.error);
