@@ -101,6 +101,21 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 ---
 
+## Installation (CLI)
+
+You can install the terminal client globally via pip:
+
+```bash
+pip install vaux-cli
+```
+
+Once installed, you can launch it from anywhere:
+
+```bash
+vaux-cli                     # Opens the interactive lobby
+vaux-cli my-room -u Alice    # Bypasses the lobby to join a room directly
+```
+
 ## Running locally
 
 ### Prerequisites
@@ -143,7 +158,11 @@ python -m venv .venv
 .venv\Scripts\activate    # Windows
 source .venv/bin/activate # macOS/Linux
 pip install -r requirements.txt
-python main.py join my-room --username yourname
+
+# Open the interactive lobby:
+python main.py
+# Or bypass the lobby to join a room directly:
+python main.py my-room --username yourname
 ```
 
 ---
@@ -194,4 +213,5 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 
 ## Why this project
 
+I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
 I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
