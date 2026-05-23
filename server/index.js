@@ -40,6 +40,18 @@ app.get("/health", (req, res) => {
 });
 
 // ─────────────────────────────
+// API PROTECTION MIDDLEWARE
+// ─────────────────────────────
+const API_KEY = process.env.API_KEY || "vaux-secret-123";
+
+app.use("/youtube", (req, res, next) => {
+  if (req.headers["x-api-key"] !== API_KEY) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+});
+
+// ─────────────────────────────
 // YOUTUBE SEARCH
 // ─────────────────────────────
 app.get("/youtube/search", async (req, res) => {
@@ -376,15 +388,16 @@ async function initializeServer() {
 
   if (!fs.existsSync(binaryPath)) {
     console.log(`[setup] Downloading yt-dlp to ${binaryPath}...`);
-    
-    const downloadUrl = process.platform === "win32"
-      ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-      : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
-      
+
+    const downloadUrl =
+      process.platform === "win32"
+        ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+        : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+
     const res = await fetch(downloadUrl);
     if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
     fs.writeFileSync(binaryPath, Buffer.from(await res.arrayBuffer()));
-    
+
     if (process.platform !== "win32") fs.chmodSync(binaryPath, "755");
     console.log("[setup] yt-dlp downloaded successfully.");
   }
@@ -396,5 +409,4 @@ async function initializeServer() {
   });
 }
 
-initializeServer().catch(console.error);
 initializeServer().catch(console.error);
