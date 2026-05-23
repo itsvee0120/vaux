@@ -5,6 +5,7 @@ Currently covers YouTube search; extend as new endpoints are added.
 
 import httpx
 import os
+import asyncio
 from dataclasses import dataclass
 
 API_KEY = os.environ.get("VAUX_API_KEY", "vaux-02187xdsx-4335")
@@ -39,13 +40,16 @@ async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
 
 
 async def get_stream_url(server_url: str, video_id: str) -> str | None:
-    """Hits the server-side yt-dlp proxy to get a direct audio stream URL."""
-    url = f"{server_url}/youtube/stream-url"
-    headers = {"x-api-key": API_KEY}
-    async with httpx.AsyncClient(headers=headers) as client:
-        try:
-            resp = await client.get(url, params={"videoId": video_id}, timeout=15.0)
-            resp.raise_for_status()
-            return resp.json().get("streamUrl")
-        except Exception:
-            return None
+    """Resolves the direct audio stream URL locally using yt-dlp."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp", "-f", "bestaudio/best", "--get-url", "--no-warnings",
+            f"https://www.youtube.com/watch?v={video_id}",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+        url = stdout.decode().strip()
+        return url if url else None
+    except Exception:
+        return None

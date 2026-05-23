@@ -87,45 +87,6 @@ app.get("/youtube/search", async (req, res) => {
 });
 
 // ─────────────────────────────
-// YOUTUBE STREAM URL RESOLVER
-// ─────────────────────────────
-const streamCache = new Map();
-
-app.get("/youtube/stream-url", async (req, res) => {
-  const { videoId } = req.query;
-  if (!videoId) return res.status(400).json({ error: "videoId required" });
-
-  if (streamCache.has(videoId)) {
-    return res.json({ streamUrl: streamCache.get(videoId) });
-  }
-
-  try {
-    const stdout = await ytdlp.execPromise([
-      "-f",
-      "bestaudio/best",
-      "--get-url",
-      "--no-warnings",
-      "--extractor-args",
-      "youtube:player_client=tv",
-      `https://www.youtube.com/watch?v=${videoId}`,
-    ]);
-
-    const streamUrl = stdout.trim();
-    if (!streamUrl)
-      return res.status(404).json({ error: "No audio stream found" });
-
-    streamCache.set(videoId, streamUrl);
-    // Expire cache after 4 hours (Google CDN URLs typically expire in ~6 hours)
-    setTimeout(() => streamCache.delete(videoId), 4 * 60 * 60 * 1000);
-
-    res.json({ streamUrl });
-  } catch (err) {
-    console.error("[ytdlp] server error:", err);
-    res.status(500).json({ error: "Failed to get stream URL" });
-  }
-});
-
-// ─────────────────────────────
 // IN-MEMORY ROOMS
 // ─────────────────────────────
 const rooms = {};

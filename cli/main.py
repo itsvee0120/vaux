@@ -106,6 +106,52 @@ def ensure_mpv():
     click.echo("mpv installed successfully ✔")
 
 # ----------------------------------------------------------------------
+# yt-dlp bootstrap
+# ----------------------------------------------------------------------
+def ensure_ytdlp():
+    """
+    Ensures yt-dlp is available.
+
+    Priority:
+    1. system yt-dlp
+    2. winget install (Windows only)
+    """
+
+    ytdlp_exe = "yt-dlp.exe" if sys.platform == "win32" else "yt-dlp"
+
+    if shutil.which(ytdlp_exe) or shutil.which("yt-dlp"):
+        return
+
+    if sys.platform != "win32":
+        click.echo("yt-dlp required: https://github.com/yt-dlp/yt-dlp/wiki/Installation")
+        sys.exit(1)
+
+    if not click.confirm("yt-dlp not found. Download it automatically?"):
+        sys.exit(1)
+
+    click.echo("Installing yt-dlp via winget...")
+    winget = shutil.which("winget") or r"C:\Users\{}\AppData\Local\Microsoft\WindowsApps\winget.exe".format(os.environ.get("USERNAME", ""))
+    
+    if not os.path.exists(winget):
+        click.echo("\n[!] winget not found.\n\nPlease install yt-dlp manually:\n\n    winget install yt-dlp.yt-dlp\n")
+        sys.exit(1)
+
+    result = subprocess.run(
+        [winget, "install", "--id", "yt-dlp.yt-dlp", "-e", "--silent", "--accept-package-agreements", "--accept-source-agreements"],
+        capture_output=False,
+    )
+    
+    if result.returncode not in (0, -1978335189):
+        click.echo("\n[!] winget install failed.\n\nPlease install manually:\n\n    winget install yt-dlp.yt-dlp\n")
+        sys.exit(1)
+
+    if not shutil.which(ytdlp_exe) and not shutil.which("yt-dlp"):
+        click.echo("[!] yt-dlp not found after install. Please restart your terminal.")
+        sys.exit(1)
+
+    click.echo("yt-dlp installed successfully ✔")
+
+# ----------------------------------------------------------------------
 # CLI
 # ----------------------------------------------------------------------
 @click.group(invoke_without_command=True)
@@ -132,6 +178,7 @@ def cli(ctx, server, debug, username, version, room_id):
     """
 
     ensure_mpv()
+    ensure_ytdlp()
 
     # ------------------------
     # version
