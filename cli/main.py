@@ -76,7 +76,7 @@ def ensure_mpv():
     click.echo("Fetching latest mpv build...")
 
     try:
-        api_url = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest"
+        api_url = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
 
         req = urllib.request.Request(api_url, headers={"User-Agent": "vaux-cli"})
         with urllib.request.urlopen(req, timeout=30) as r:
