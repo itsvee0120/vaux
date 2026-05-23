@@ -376,7 +376,15 @@ async function initializeServer() {
 
   if (!fs.existsSync(binaryPath)) {
     console.log(`[setup] Downloading yt-dlp to ${binaryPath}...`);
-    await YTDlpWrap.downloadFromGithub(binaryPath);
+    
+    const downloadUrl = process.platform === "win32"
+      ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+      : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
+      
+    const res = await fetch(downloadUrl);
+    if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
+    fs.writeFileSync(binaryPath, Buffer.from(await res.arrayBuffer()));
+    
     if (process.platform !== "win32") fs.chmodSync(binaryPath, "755");
     console.log("[setup] yt-dlp downloaded successfully.");
   }
@@ -388,4 +396,5 @@ async function initializeServer() {
   });
 }
 
+initializeServer().catch(console.error);
 initializeServer().catch(console.error);
