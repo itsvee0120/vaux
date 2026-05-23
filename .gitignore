@@ -1,9 +1,26 @@
 node_modules/
 .env
 .env.local
+.env.*
 __pycache__/
 *.pyc
 .venv/
 .next/
 dist/
-.vscode/extensions.json
+.vscode/
+cookies.txt
+
+# Local logs and vendor binaries
+mpv_debug.log
+cli/vendor/mpv/*.exe
+cli/vendor/mpv/*.dll
+cli/vendor/mpv/*.com
+
+# OS generated files
+.DS_Store
+.DS_Store?
+
+# npm / yarn logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
