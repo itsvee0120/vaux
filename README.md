@@ -103,10 +103,10 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 ## Installation (CLI)
 
-You can install the terminal client globally via pip:
+We highly recommend using [`pipx`](https://pipx.pypa.io/) to install the terminal client globally so it is always available on your drive and not hidden inside a temporary Anaconda environment:
 
 ```bash
-pip install vaux-cli
+pipx install vaux-cli
 ```
 
 Once installed, you can launch it from anywhere:

@@ -479,9 +479,8 @@ class VauxApp(App):
         if shutil.which(mpv_exe):
             self.player = MPVPlayer(shutil.which(mpv_exe))
         else:
-            # 2. Fallback to local dev vendor folder
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            vendor_dir = os.path.join(base_dir, "vendor", "mpv")
+            # 2. Fallback to user data folder
+            vendor_dir = os.path.expanduser("~/.vaux/mpv")
             mpv_path = os.path.join(vendor_dir, mpv_exe)
             
             if os.path.exists(mpv_path):

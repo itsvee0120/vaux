@@ -16,10 +16,10 @@ Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 ## Installation
 
 ```bash
-pip install vaux-cli
+pipx install vaux-cli
 ```
 
-*Note: The CLI requires `mpv` to play audio. If you are on Windows, the app will automatically offer to download a portable version of `mpv` for you on first run! Linux/macOS users should install `mpv` via their package manager (e.g., `apt install mpv` or `brew install mpv`).*
+_Note: The CLI requires `mpv` to play audio. If you are on Windows, the app will automatically offer to download a portable version of `mpv` for you on first run! Linux/macOS users should install `mpv` via their package manager (e.g., `apt install mpv` or `brew install mpv`)._
 
 ## Usage
 
@@ -37,7 +37,6 @@ vaux <room-id> -u <your-name>
 
 ## Keyboard Shortcuts
 
-
 | Key       | Action                   |
 | --------- | ------------------------ |
 | `Ctrl+S`  | Focus Search             |
@@ -48,7 +47,6 @@ vaux <room-id> -u <your-name>
 | `Ctrl+D`  | Vote Down selected track |
 | `-` / `=` | Volume Down / Up         |
 | `Ctrl+C`  | Quit                     |
-
 
 ---
 
@@ -85,8 +83,6 @@ Example:
 ```
 /host john
 ```
-
-
 
 ---
 
