@@ -214,4 +214,3 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 ## Why this project
 
 I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
-I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺

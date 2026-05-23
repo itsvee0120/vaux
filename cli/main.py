@@ -68,15 +68,15 @@ def ensure_mpv():
     # 3. non-windows fallback
     if sys.platform != "win32":
         click.echo("mpv required: https://mpv.io/installation/")
-        return
+        sys.exit(1)
 
     if not click.confirm("mpv not found. Download it automatically?"):
-        return
+        sys.exit(1)
 
     click.echo("Fetching latest mpv build...")
 
     try:
-        api_url = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
+        api_url = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest"
 
         req = urllib.request.Request(api_url, headers={"User-Agent": "vaux-cli"})
         with urllib.request.urlopen(req, timeout=30) as r:
@@ -85,15 +85,15 @@ def ensure_mpv():
         assets = release.get("assets", [])
 
         # ----------------------------------------------------------
-        # prefer mpv-dev-x86_64-v3 builds
+        # prefer x86_64-v3 builds (highly preferring .zip)
         # ----------------------------------------------------------
         def score(a):
             name = a["name"]
             return (
-                ("mpv-dev-x86_64-v3" in name) * 100 +
+                ("x86_64-v3" in name) * 100 +
                 ("x86_64" in name) * 10 +
-                (name.endswith(".7z")) * 5 +
-                (name.endswith(".zip")) * 1
+                (name.endswith(".zip")) * 50 +
+                (name.endswith(".7z")) * 1
             )
 
         assets.sort(key=score, reverse=True)
@@ -132,74 +132,27 @@ def ensure_mpv():
                         break
 
         # ----------------------------------------------------------
-        # 7Z extraction (SYSTEM 7z FIRST)
+        # 7Z extraction
         # ----------------------------------------------------------
         else:
-            extracted = False
-
-            # A. system 7z (recommended)
-            try:
-                with tempfile.TemporaryDirectory() as tmp:
-                    archive_path = os.path.join(tmp, "mpv.7z")
-
-                    with open(archive_path, "wb") as f:
-                        f.write(data)
-
-                    subprocess.run(
-                        ["7z", "x", "-y", f"-o{tmp}", archive_path],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
-
-                    for root, _, files in os.walk(tmp):
-                        if "mpv.exe" in files:
-                            shutil.copy2(os.path.join(root, "mpv.exe"), mpv_path)
-                            extracted = True
-                            break
-
-            except FileNotFoundError:
-                pass
-
-            # B. fallback py7zr
-            if not extracted:
-                try:
-                    import py7zr #type: ignore
-                except ImportError:
-                    click.echo(
-                        "\nCannot extract .7z archive.\n"
-                        "Install one of:\n"
-                        "  - 7-Zip (recommended)\n"
-                        "  - pip install py7zr\n"
-                    )
-                    return
-                click.echo(
-                    "\n[!] Cannot extract mpv.\n\n"
-                    "The downloaded mpv archive is a .7z file that uses BCJ2 compression, which Python cannot extract natively.\n"
-                    "Please install 7-Zip (https://7-zip.org/) so vaux can extract it automatically, OR install mpv globally via winget:\n\n"
-                    "    winget install mpv.mpv\n"
-                )
-                return
-
-                with tempfile.TemporaryDirectory() as tmp:
-                    with py7zr.SevenZipFile(archive, mode="r") as z:
-                        z.extractall(path=tmp)
-
-                    for root, _, files in os.walk(tmp):
-                        if "mpv.exe" in files:
-                            shutil.copy2(os.path.join(root, "mpv.exe"), mpv_path)
-                            extracted = True
-                            break
-
-            if not extracted:
-                raise RuntimeError("Failed to extract mpv.exe")
+            import py7zr
+            with py7zr.SevenZipFile(io.BytesIO(data)) as z:
+                all_files = z.getnames()
+                mpv_entry = next((f for f in all_files if f.endswith("mpv.exe")), None)
+                if not mpv_entry:
+                    raise RuntimeError("mpv.exe not found in archive")
+                z.extract(targets=[mpv_entry], path=VENDOR_DIR)
+                # move to flat VENDOR_DIR if nested
+                extracted_path = os.path.join(VENDOR_DIR, mpv_entry)
+                if extracted_path != mpv_path:
+                    shutil.move(extracted_path, mpv_path)
 
         click.echo("mpv installed successfully ✔")
         _add_vendor_to_path()
 
     except Exception as e:
         click.echo(f"mpv setup failed: {e}")
-        return
+        sys.exit(1) 
 
 # ----------------------------------------------------------------------
 # CLI
@@ -209,9 +162,10 @@ def ensure_mpv():
 @click.option("--debug", is_flag=True, help="Enable debug output.")
 @click.option("-u", "--username", help="Your display name (used for quick join).")
 @click.option("--version", is_flag=True, is_eager=True, help="Show version and exit.")
+@click.option("--path", is_flag=True, is_eager=True, help="Show the paths to the vaux and mpv folders and exit.")
 @click.argument("room_id", required=False)
 @click.pass_context
-def cli(ctx, server, debug, username, version, room_id):
+def cli(ctx, server, debug, username, version, path, room_id):
     """
     Vaux — synchronized listening rooms in the terminal.
 
@@ -234,6 +188,14 @@ def cli(ctx, server, debug, username, version, room_id):
     # ------------------------
     if version:
         click.echo(f"vaux {__version__}")
+        return
+
+    # ------------------------
+    # path
+    # ------------------------
+    if path:
+        click.echo(f"Vaux data folder: {os.path.dirname(VENDOR_DIR)}")
+        click.echo(f"MPV folder: {VENDOR_DIR}")
         return
 
     # ------------------------
