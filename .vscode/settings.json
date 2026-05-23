@@ -1,0 +1,7 @@
+{
+  "json.schemas": [],
+
+  "terminal.integrated.env.windows": {
+    "CONDA_PREFIX": ""
+  }
+}
