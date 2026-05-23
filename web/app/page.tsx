@@ -6,7 +6,7 @@ import { type PlaybackState, EMPTY_PLAYBACK } from "@/lib/playback";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { LoginPage } from "@/components/LoginPage";
 import { LobbyPage } from "@/components/LobbyPage";
-import { loadSession, saveSession } from "@/lib/session";
+import { clearSession, loadSession, saveSession } from "@/lib/session";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
 
@@ -216,6 +216,21 @@ export default function Home() {
     getSocket().emit("host:transfer", { roomId, newHostId });
   }
 
+  function leaveRoom() {
+    clearSession();
+    const socket = getSocket();
+    if (socket.connected) socket.disconnect();
+    setScreen("lobby");
+    setRoomId("");
+    setQueue([]);
+    setMessages([]);
+    setMembers([]);
+    setPlayback(EMPTY_PLAYBACK);
+    setIsHost(false);
+    setSearchQuery("");
+    setSearchResults([]);
+  }
+
   if (!appReady || restoring) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-black font-mono text-vaux-green">
@@ -244,6 +259,7 @@ export default function Home() {
       username={username}
       members={members}
       onTransferHost={transferHost}
+      onLeave={leaveRoom}
       isHost={isHost}
       queue={queue}
       messages={messages}

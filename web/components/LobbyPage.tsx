@@ -20,6 +20,7 @@ import {
   Loader2,
   Users,
   ChevronDownIcon,
+  LogOut,
 } from "lucide-react";
 
 type LobbyPageProps = {
@@ -27,6 +28,7 @@ type LobbyPageProps = {
   username: string;
   members: { userId: string; username: string; role: string }[];
   onTransferHost: (userId: string) => void;
+  onLeave: () => void;
   isHost: boolean;
   queue: Track[];
   messages: Message[];
@@ -54,6 +56,7 @@ export function LobbyPage({
   username,
   members,
   onTransferHost,
+  onLeave,
   isHost,
   queue,
   messages,
@@ -92,12 +95,28 @@ export function LobbyPage({
   return (
     <main className="flex min-h-dvh w-full flex-col bg-black font-mono text-white">
       <div className="flex items-center gap-3 border-b border-vaux-green px-6 py-3">
-        <span className="text-lg font-bold text-vaux-green">vaux</span>
+        <button
+          type="button"
+          onClick={onLeave}
+          className="cursor-pointer text-lg font-bold text-vaux-green transition-colors hover:text-vaux-light"
+          title="Leave room"
+        >
+          vaux
+        </button>
         <span className="text-zinc-600">/</span>
         <span className="text-sm text-vaux-green-dark">{roomId}</span>
         <span className="ml-auto text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
+        <button
+          type="button"
+          onClick={onLeave}
+          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+          title="Leave room"
+        >
+          <LogOut className="size-3.5" aria-hidden />
+          leave
+        </button>
       </div>
 
       {/* Video Components Start Here */}
