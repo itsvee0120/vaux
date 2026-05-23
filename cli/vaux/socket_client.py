@@ -22,12 +22,13 @@ class VauxSocket:
         self.sio.on(event, self._make_dispatcher(event))
 
     def _make_dispatcher(self, event: str):
-        async def dispatch(data=None):
+        async def dispatch(*args):
+            data = args[0] if args else {}
             for h in self._handlers.get(event, []):
                 if asyncio.iscoroutinefunction(h):
-                    await h(data or {})
+                    await h(data)
                 else:
-                    h(data or {})
+                    h(data)
         return dispatch
 
     # ── connection ─────────────────────────────────────────────────────────

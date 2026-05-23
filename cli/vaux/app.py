@@ -16,6 +16,7 @@ Layout (single screen):
 """
 
 import asyncio
+import webbrowser
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
@@ -24,6 +25,7 @@ from textual.widgets import (
     ListItem, Static, RichLog,
 )
 from textual.reactive import reactive
+from rich.text import Text
 
 from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
@@ -39,23 +41,15 @@ class NowPlaying(Static):
     def __init__(self, **kwargs):
         super().__init__("", **kwargs)
         self._state = PlaybackState()
-        self._ticker_task: asyncio.Task | None = None
 
     def on_mount(self):
-        self._ticker_task = asyncio.get_event_loop().create_task(self._tick())
-
-    def on_unmount(self):
-        if self._ticker_task:
-            self._ticker_task.cancel()
-
-    async def _tick(self):
-        """Refreshes the position display every second."""
-        while True:
-            await asyncio.sleep(1)
-            self._render_state()
+        self.set_interval(1, self._render_state)
 
     def update_state(self, state: PlaybackState):
+        old_id = self._state.video_id
         self._state = state
+        # if state.is_playing and state.video_id and state.video_id != old_id:
+        #     webbrowser.open(f"https://youtu.be/{state.video_id}?t={int(state.position_seconds)}")
         self._render_state()
 
     def _render_state(self):
@@ -117,7 +111,7 @@ class VauxApp(App):
     }
 
     #right {
-        width: 40;
+        width: 80;
         layout: vertical;
     }
 
@@ -175,9 +169,9 @@ class VauxApp(App):
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+s", "focus_search", "Search", show=True),
         Binding("ctrl+t", "focus_chat", "Chat", show=True),
-        Binding("up", "vote_up", "Vote ▲", show=False),
-        Binding("down", "vote_down", "Vote ▼", show=False),
-        Binding("enter", "select", "Select", show=False),
+        Binding("ctrl+u", "vote_up", "Vote ▲", show=False),
+        Binding("ctrl+d", "vote_down", "Vote ▼", show=False),
+        Binding("ctrl+o", "toggle_playback", "Play/Pause", show=True),
     ]
 
     def __init__(self, room_id: str, username: str, server_url: str):
@@ -240,56 +234,56 @@ class VauxApp(App):
         self.socket.on("chat:message", self._on_chat_message)
         self.socket.on("reaction:broadcast", self._on_reaction)
 
-    def _on_room_joined(self, data: dict):
+    async def _on_room_joined(self, data: dict):
         self.role = data.get("role", "listener")
         self.is_host = self.role == "host"
         self.members = data.get("members", [])
         self.queue = data.get("queue", [])
         pb = data.get("playbackState") or {}
         self.playback = PlaybackState.from_dict(pb)
-        self.call_from_thread(self._refresh_queue)
-        self.call_from_thread(self._refresh_now_playing)
-        self.call_from_thread(self._post_system, f"joined [{self.role}]")
+        await self._refresh_queue()
+        self._refresh_now_playing()
+        self._post_system(f"joined [{self.role}]")
 
-    def _on_member_joined(self, data: dict):
+    async def _on_member_joined(self, data: dict):
         uname = data.get("username", "?")
-        self.call_from_thread(self._post_system, f"{uname} joined")
+        self._post_system(f"{uname} joined")
 
-    def _on_member_left(self, data: dict):
+    async def _on_member_left(self, data: dict):
         uid = data.get("userId", "?")
-        self.call_from_thread(self._post_system, f"{uid} left")
+        self._post_system(f"{uid} left")
 
-    def _on_host_changed(self, data: dict):
+    async def _on_host_changed(self, data: dict):
         new_host_id = data.get("newHostId")
         self.is_host = new_host_id == self.username
         self.role = "host" if self.is_host else "listener"
         new_name = data.get("newHostUsername", new_host_id)
-        self.call_from_thread(self._post_system, f"⭐ {new_name} is now host")
-        self.call_from_thread(self._refresh_queue)
+        self._post_system(f"⭐ {new_name} is now host")
+        await self._refresh_queue()
 
-    def _on_queue_updated(self, data: dict):
+    async def _on_queue_updated(self, data: dict):
         self.queue = data.get("queue", [])
-        self.call_from_thread(self._refresh_queue)
+        await self._refresh_queue()
 
-    def _on_playback_state(self, data: dict):
+    async def _on_playback_state(self, data: dict):
         self.playback = PlaybackState.from_dict(data)
-        self.call_from_thread(self._refresh_now_playing)
+        self._refresh_now_playing()
 
-    def _on_chat_message(self, data: dict):
+    async def _on_chat_message(self, data: dict):
         uname = data.get("username", "?")
         text = data.get("text", "")
-        self.call_from_thread(self._post_chat, uname, text)
+        self._post_chat(uname, text)
 
-    def _on_reaction(self, data: dict):
+    async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")
-        self.call_from_thread(self._post_system, emoji)
+        self._post_system(emoji)
 
     # ── UI refresh helpers ─────────────────────────────────────────────────
-    def _refresh_queue(self):
+    async def _refresh_queue(self):
         lv = self.query_one("#queue-list", ListView)
-        lv.clear()
+        await lv.clear()
         for item in self.queue:
-            lv.append(QueueItem(item, self.is_host))
+            await lv.append(QueueItem(item, self.is_host))
 
     def _refresh_now_playing(self):
         widget = self.query_one("#now-playing", NowPlaying)
@@ -297,11 +291,15 @@ class VauxApp(App):
 
     def _post_chat(self, username: str, text: str):
         log = self.query_one("#chat-log", RichLog)
-        log.write(f"[bold green]{username}[/] {text}")
+        t = Text()
+        t.append(f"{username} ", style="bold green")
+        t.append(text)
+        log.write(t)
 
     def _post_system(self, text: str):
         log = self.query_one("#chat-log", RichLog)
-        log.write(f"[dim italic]{text}[/]")
+        t = Text(text, style="dim italic")
+        log.write(t)
 
     # ── button handlers ────────────────────────────────────────────────────
     async def on_button_pressed(self, event: Button.Pressed):
@@ -324,9 +322,9 @@ class VauxApp(App):
         results = await search_youtube(self.server_url, query)
         self.search_results = results
         lv = self.query_one("#search-results", ListView)
-        lv.clear()
+        await lv.clear()
         for r in results:
-            lv.append(SearchResultItem(r))
+            await lv.append(SearchResultItem(r))
         inp.value = ""
 
     async def _do_send_chat(self):
@@ -378,3 +376,15 @@ class VauxApp(App):
             item = self.queue[idx]
             if item.get("votes", 0) >= 1:
                 await self.socket.vote(self.room_id, item["id"], -1)
+
+    async def action_toggle_playback(self):
+        if not self.is_host or not self.playback.video_id:
+            return
+            
+        current_pos = self.playback.synced_position()
+        if self.playback.is_playing:
+            await self.socket.pause(self.room_id, current_pos)
+            self._post_system("paused playback")
+        else:
+            await self.socket.play(self.room_id, current_pos)
+            self._post_system("resumed playback")
