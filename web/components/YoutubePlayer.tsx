@@ -20,7 +20,6 @@ type YTNamespace = {
     options: {
       height: string;
       width: string;
-      videoId?: string;
       playerVars?: Record<string, string | number>;
       events?: {
         onReady?: () => void;
@@ -34,6 +33,7 @@ type YTNamespace = {
     ENDED: number;
   };
 };
+
 declare global {
   interface Window {
     YT?: YTNamespace;
@@ -185,6 +185,8 @@ export function YoutubePlayer({
         playerRef.current = null;
       }
       readyRef.current = false;
+      // Reset lastVideoId so applyPlayback treats the rebuilt player as fresh
+      lastVideoId.current = null;
 
       const targetEl = document.createElement("div");
       wrapperRef.current.innerHTML = "";
@@ -193,26 +195,32 @@ export function YoutubePlayer({
       playerRef.current = new window.YT.Player(targetEl, {
         height: "300",
         width: "100%",
-        // Pass videoId here so YouTube's embed server has it from the start,
-        // not just in the onReady callback — fixes the Playback ID CDN error
-        videoId: autoplayVideoId,
         playerVars: {
-          autoplay: autoplayVideoId ? 1 : 0, // 1 only when unlocking with a gesture
+          autoplay: 0, // Never rely on playerVars autoplay — use loadVideoById instead
           controls: 1, // Always enabled; pointer-events-none handles locking it for listeners
           disablekb: 0,
           modestbranding: 1,
           rel: 0,
-          ...(autoplayVideoId ? { start: Math.floor(startSeconds ?? 0) } : {}),
           origin: window.location.origin,
         },
         events: {
           onReady: () => {
             readyRef.current = true;
             if (autoplayVideoId) {
-              // Seek to exact synced position — start playerVar only accepts integers
-              playerRef.current?.seekTo(startSeconds ?? 0, true);
+              // Called inside a user-gesture stack — loadVideoById here is trusted
+              // by YouTube and will not trigger Error 150 or the CDN playback error
+              applyingRemote.current = true;
+              lastVideoId.current = autoplayVideoId;
+              lastAppliedAt.current = playbackRef.current.updatedAt;
+              playerRef.current?.loadVideoById(
+                autoplayVideoId,
+                startSeconds ?? 0,
+              );
+              applyTimeoutRef.current = setTimeout(() => {
+                applyingRemote.current = false;
+              }, 2000);
             } else {
-              // Use the ref so we never access applyPlayback before it is declared
+              // Normal mount — apply whatever the server says
               applyPlaybackRef.current(playbackRef.current);
             }
           },
@@ -283,8 +291,6 @@ export function YoutubePlayer({
     const target = getSyncedPosition(state);
 
     // Reset all guards before rebuilding
-    lastVideoId.current = state.videoId;
-    lastAppliedAt.current = state.updatedAt;
     applyingRemote.current = false;
     if (applyTimeoutRef.current) {
       clearTimeout(applyTimeoutRef.current);
