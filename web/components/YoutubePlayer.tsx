@@ -220,15 +220,31 @@ export function YoutubePlayer({
 
   // Detect if listener's browser is blocking autoplay
   useEffect(() => {
-    if (!isHost && playback.isPlaying && !localPlaying) {
-      const timer = setTimeout(() => {
-        setShowBlockedOverlay(true);
-      }, 1500); // 1.5s grace period for buffering/loading
-      return () => clearTimeout(timer);
-    } else {
-      setShowBlockedOverlay(false);
-    }
+    const isBlocked = !isHost && playback.isPlaying && !localPlaying;
+    const timer = setTimeout(
+      () => {
+        setShowBlockedOverlay(isBlocked);
+      },
+      isBlocked ? 1500 : 0,
+    );
+    return () => clearTimeout(timer);
   }, [isHost, playback.isPlaying, localPlaying]);
+
+  // ── Global click unlock ──
+  // If autoplay is blocked, unlock it seamlessly if the user clicks ANYWHERE
+  // on the page (e.g., sending a chat message, voting on a song).
+  useEffect(() => {
+    if (!showBlockedOverlay) return;
+
+    const unlockAudio = () => {
+      applyPlayback(playbackRef.current);
+      setShowBlockedOverlay(false);
+    };
+
+    window.addEventListener("pointerdown", unlockAudio, { capture: true });
+    return () =>
+      window.removeEventListener("pointerdown", unlockAudio, { capture: true });
+  }, [showBlockedOverlay, applyPlayback]);
 
   // ── playback sync ──
   // Re-applies remote state whenever the server broadcasts a new updatedAt.
