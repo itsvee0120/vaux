@@ -19,6 +19,7 @@ import asyncio
 import webbrowser
 import os
 import sys
+import shutil
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, ScrollableContainer
@@ -222,11 +223,17 @@ class VauxApp(App):
         self.search_results: list[SearchResult] = []
         self.last_video_id = None
 
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
-        mpv_path = os.path.join(base_dir, "vendor", "mpv", mpv_exe)
-        if os.path.exists(mpv_path):
-            self.player = MPVPlayer(mpv_path)
+        
+        # 1. Try to find mpv installed globally on the user's system
+        if shutil.which(mpv_exe):
+            self.player = MPVPlayer(mpv_exe)
+        else:
+            # 2. Fallback to local dev vendor folder
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            mpv_path = os.path.join(base_dir, "vendor", "mpv", mpv_exe)
+            if os.path.exists(mpv_path):
+                self.player = MPVPlayer(mpv_path)
 
     # ── layout ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -289,7 +296,7 @@ class VauxApp(App):
         await self._apply_playback()
         self._post_system(f"joined [{self.role}]")
         if not getattr(self, "player", None):
-            self._post_system("mpv executable not found in vendor/mpv. Audio playback is disabled.")
+            self._post_system("mpv not found on system. Please install mpv to hear audio.")
 
     async def _on_member_joined(self, data: dict):
         uname = data.get("username", "?")
