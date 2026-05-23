@@ -9,9 +9,6 @@ import sys
 import os
 import shutil
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
 # Ensure python-mpv can find mpv-1.dll or mpv-2.dll if it's placed in this folder
 os.environ["PATH"] = os.path.dirname(os.path.abspath(__file__)) + os.pathsep + os.environ.get("PATH", "")
 
