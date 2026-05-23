@@ -1,12 +1,24 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useSyncExternalStore,
+} from "react";
 import { getSocket } from "@/lib/socket";
 import { type PlaybackState, EMPTY_PLAYBACK } from "@/lib/playback";
 import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { LoginPage } from "@/components/LoginPage";
 import { LobbyPage } from "@/components/LobbyPage";
-import { clearSession, loadSession, saveSession } from "@/lib/session";
+import {
+  clearSession,
+  getSessionSnapshot,
+  loadSession,
+  saveSession,
+  subscribeSession,
+} from "@/lib/session";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
 
@@ -24,12 +36,29 @@ function joinSocketRoom(roomId: string, username: string) {
   }
 }
 
+function useHydrated() {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
+}
+
+function useStoredSession() {
+  return useSyncExternalStore(
+    subscribeSession,
+    getSessionSnapshot,
+    () => null,
+  );
+}
+
 export default function Home() {
-  const [appReady, setAppReady] = useState(false);
+  const hydrated = useHydrated();
+  const session = useStoredSession();
   const [screen, setScreen] = useState<"lobby" | "room">("lobby");
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
-  const [restoring, setRestoring] = useState(false);
+  const [rejoinFailed, setRejoinFailed] = useState(false);
   const [members, setMembers] = useState<
     { userId: string; username: string; role: string }[]
   >([]);
@@ -44,6 +73,9 @@ export default function Home() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const usernameRef = useRef(username);
 
+  const restoring =
+    hydrated && session !== null && screen === "lobby" && !rejoinFailed;
+
   useEffect(() => {
     usernameRef.current = username;
   }, [username]);
@@ -54,12 +86,17 @@ export default function Home() {
     socket.on(
       "room:joined",
       ({ queue, playbackState, role, members: initialMembers }) => {
+        const stored = loadSession();
+        if (stored) {
+          setRoomId(stored.roomId);
+          setUsername(stored.username);
+        }
         setQueue(queue);
         setPlayback(playbackState ?? EMPTY_PLAYBACK);
         setIsHost(role === "host");
         setMembers(initialMembers ?? []);
         setScreen("room");
-        setRestoring(false);
+        setRejoinFailed(false);
       },
     );
 
@@ -111,22 +148,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout> | undefined;
-    const session = loadSession();
+    if (!session || screen !== "lobby" || rejoinFailed) return;
 
-    if (session) {
-      setRestoring(true);
-      setRoomId(session.roomId);
-      setUsername(session.username);
-      joinSocketRoom(session.roomId, session.username);
-      timeout = setTimeout(() => setRestoring(false), 12_000);
-    }
-
-    setAppReady(true);
-    return () => {
-      if (timeout) clearTimeout(timeout);
-    };
-  }, []);
+    joinSocketRoom(session.roomId, session.username);
+    const timeout = setTimeout(() => setRejoinFailed(true), 12_000);
+    return () => clearTimeout(timeout);
+  }, [session, screen, rejoinFailed]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -162,8 +189,10 @@ export default function Home() {
     const user = username.trim();
     if (!rid || !user) return;
 
+    setRoomId(rid);
+    setUsername(user);
+    setRejoinFailed(false);
     saveSession(rid, user);
-    setRestoring(true);
     joinSocketRoom(rid, user);
   }
 
@@ -222,6 +251,7 @@ export default function Home() {
     if (socket.connected) socket.disconnect();
     setScreen("lobby");
     setRoomId("");
+    setRejoinFailed(false);
     setQueue([]);
     setMessages([]);
     setMembers([]);
@@ -231,7 +261,10 @@ export default function Home() {
     setSearchResults([]);
   }
 
-  if (!appReady || restoring) {
+  const loginRoomId = session?.roomId ?? roomId;
+  const loginUsername = session?.username ?? username;
+
+  if (!hydrated || restoring) {
     return (
       <main className="flex min-h-dvh items-center justify-center bg-black font-mono text-vaux-green">
         <p className="text-sm">
@@ -244,8 +277,8 @@ export default function Home() {
   if (screen === "lobby") {
     return (
       <LoginPage
-        roomId={roomId}
-        username={username}
+        roomId={loginRoomId}
+        username={loginUsername}
         onRoomIdChange={setRoomId}
         onUsernameChange={setUsername}
         onJoin={joinRoom}
