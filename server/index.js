@@ -42,7 +42,7 @@ app.get("/health", (req, res) => {
 // ─────────────────────────────
 // API PROTECTION MIDDLEWARE
 // ─────────────────────────────
-const API_KEY = process.env.API_KEY || "vaux-secret-123";
+const API_KEY = process.env.API_KEY || "vaux-02187xdsx-4335";
 
 app.use("/youtube", (req, res, next) => {
   if (req.headers["x-api-key"] !== API_KEY) {
