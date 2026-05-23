@@ -35,6 +35,7 @@ from rich.text import Text
 from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url
+from vaux.mpv import find_mpv
 
 import subprocess
 
@@ -469,20 +470,8 @@ class VauxApp(App):
         self.stream_cache: dict[str, str] = {}
         self.volume = 100
 
-        mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
-        
-        # Try to find mpv installed globally on the user's system
-        if shutil.which(mpv_exe):
-            self.player = MPVPlayer(shutil.which(mpv_exe))
-        else:
-            # Fallback to user data folder
-            vendor_dir = os.path.expanduser("~/.vaux/mpv")
-            mpv_path = os.path.join(vendor_dir, mpv_exe)
-            
-            if os.path.exists(mpv_path):
-                self.player = MPVPlayer(mpv_path)
-            else:
-                self.player = None
+        mpv_path = find_mpv()
+        self.player = MPVPlayer(mpv_path) if mpv_path else None
 
     # ── layout ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:

@@ -6,14 +6,14 @@ Usage:
     vaux join <room-id> <username>
 """
 
-import sys
 import os
 import shutil
-import subprocess
+import sys
 from importlib.metadata import version, PackageNotFoundError
 
 import click
 from vaux.app import VauxApp, LobbyApp
+from vaux.mpv import ensure_mpv
 
 # ----------------------------------------------------------------------
 # Version
@@ -27,83 +27,6 @@ except PackageNotFoundError:
 # Config
 # ----------------------------------------------------------------------
 SERVER_URL = "https://vaux.onrender.com"
-VENDOR_DIR = os.path.expanduser("~/.vaux/mpv")
-
-
-def _add_vendor_to_path():
-    os.environ["PATH"] = VENDOR_DIR + os.pathsep + os.environ.get("PATH", "")
-
-
-# ----------------------------------------------------------------------
-# MPV bootstrap
-# ----------------------------------------------------------------------
-def ensure_mpv():
-    """
-    Ensures mpv is available.
-
-    Priority:
-    1. system mpv
-    2. cached install (~/.vaux/mpv/mpv.exe)
-    3. winget install (Windows only)
-    """
-
-    mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
-
-    # 1. system install
-    if shutil.which(mpv_exe):
-        return
-
-    mpv_path = os.path.join(VENDOR_DIR, mpv_exe)
-
-    # 2. cached install
-    if os.path.exists(mpv_path):
-        _add_vendor_to_path()
-        return
-
-    # 3. non-windows fallback
-    if sys.platform != "win32":
-        click.echo("mpv required: https://mpv.io/installation/")
-        sys.exit(1)
-
-    if not click.confirm("mpv not found. Download it automatically?"):
-        sys.exit(1)
-
-    click.echo("Installing mpv via winget...")
-    winget = shutil.which("winget") or r"C:\Users\{}\AppData\Local\Microsoft\WindowsApps\winget.exe".format(os.environ.get("USERNAME", ""))
-    
-    if not os.path.exists(winget):
-        click.echo(
-            "\n[!] winget not found.\n\n"
-            "Please install mpv manually:\n\n"
-            "    winget install shinchiro.mpv\n\n"
-            "Or download from: https://mpv.io/installation/\n"
-        )
-        sys.exit(1)
-
-    result = subprocess.run(
-        [winget, "install", "--id", "shinchiro.mpv", "-e",
-         "--silent", "--accept-package-agreements", "--accept-source-agreements",
-         "--override", f'/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR="{VENDOR_DIR}"'],
-        capture_output=False,
-    )
-    if result.returncode not in (0, -1978335189):
-        click.echo(
-            "\n[!] winget install failed.\n\n"
-            "Please install mpv manually:\n\n"
-            "    winget install shinchiro.mpv\n\n"
-            "Or download from: https://mpv.io/installation/\n"
-        )
-        sys.exit(1)
-
-    _add_vendor_to_path()
-
-    if not shutil.which("mpv.exe"):
-        # last resort: search VENDOR_DIR directly
-        if not os.path.exists(mpv_path):
-            click.echo("[!] mpv.exe not found after install. Please restart your terminal.")
-            sys.exit(1)
-
-    click.echo("mpv installed successfully ✔")
 
 # ----------------------------------------------------------------------
 # yt-dlp check
