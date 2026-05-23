@@ -177,16 +177,18 @@ NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 
 (X = done, - = in progress)
 
-[x] Real-time rooms and chat
-[x] YouTube search and shared queue
-[x] Synchronized playback
-[x] Voting system
-[-] Roles (Host / DJ / Listener)
-[ ] Emoji reactions
-[ ] Song history
-[ ] Public room discovery
-[ ] AI playlist seeding from room vibe
-[ ] CLI installable via `pip install vaux-cli`
+- [x] Real-time rooms
+- [x] Shared queue
+- [x] Live voting
+- [x] Synchronized playback
+- [x] Host controls
+- [x] Chat
+- [x] Emoji reactions
+- [ ] Song history
+- [ ] Public room discovery
+- [ ] AI playlist seeding
+- [ ] Persistent PostgreSQL storage
+- [ ] Installable CLI via `pip install vaux-cli`
 
 ---
 
