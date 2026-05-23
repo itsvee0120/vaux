@@ -2,107 +2,206 @@
 vaux CLI — terminal client for vaux listening rooms.
 
 Usage:
-    python main.py join <room-id> --username <name>
+    vaux join <room-id> <username>
+    vaux
 """
+
 import sys
 import os
 import shutil
+import tempfile
+import json
+import io
+import zipfile
+import subprocess
+import urllib.request
 from importlib.metadata import version, PackageNotFoundError
 
+import click
+from vaux.app import VauxApp, LobbyApp
+
+# ----------------------------------------------------------------------
+# Version
+# ----------------------------------------------------------------------
 try:
     __version__ = version("vaux-cli")
 except PackageNotFoundError:
     __version__ = "dev"
 
-# Add local user vendor folder to PATH just in case
-os.environ["PATH"] = os.path.expanduser("~/.vaux/mpv") + os.pathsep + os.environ.get("PATH", "")
+# ----------------------------------------------------------------------
+# Vendor PATH (local mpv)
+# ----------------------------------------------------------------------
+VENDOR_DIR = os.path.expanduser("~/.vaux/mpv")
 
-import click
-from vaux.app import VauxApp, LobbyApp
 
+def _add_vendor_to_path():
+    os.environ["PATH"] = VENDOR_DIR + os.pathsep + os.environ.get("PATH", "")
+
+# ----------------------------------------------------------------------
+# MPV bootstrap
+# ----------------------------------------------------------------------
 def ensure_mpv():
-    """Checks for mpv and prompts Windows users to auto-download it if missing."""
+    """
+    Ensures mpv exists.
+
+    Strategy:
+    1. system mpv
+    2. ~/.vaux/mpv/mpv.exe
+    3. download mpv-dev-x86_64-v3 .7z from GitHub
+    """
+
     mpv_exe = "mpv.exe" if sys.platform == "win32" else "mpv"
+
+    # 1. system install
     if shutil.which(mpv_exe):
         return
-        
-    vendor_dir = os.path.expanduser("~/.vaux/mpv")
-    mpv_path = os.path.join(vendor_dir, mpv_exe)
-    
+
+    mpv_path = os.path.join(VENDOR_DIR, mpv_exe)
+
+    # 2. cached install
     if os.path.exists(mpv_path):
+        _add_vendor_to_path()
         return
-        
-    if sys.platform == "win32":
-        if click.confirm("mpv is required to play audio, but was not found. Download it now?"):
-            import urllib.request
-            import json
-            import zipfile
-            import io
-            
-            click.echo(f"Downloading mpv to {vendor_dir} (this may take a minute)...")
+
+    if sys.platform != "win32":
+        click.echo("mpv required: https://mpv.io/installation/")
+        sys.exit(1)
+
+    if not click.confirm("mpv not found. Download it automatically?"):
+        sys.exit(1)
+
+    click.echo("Fetching latest mpv build...")
+
+    try:
+        api_url = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
+
+        req = urllib.request.Request(api_url, headers={"User-Agent": "vaux-cli"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            release = json.loads(r.read().decode())
+
+        assets = release.get("assets", [])
+
+        # Prefer mpv-dev-x86_64-v3 builds
+        def score(a):
+            name = a["name"]
+            return (
+                ("mpv-dev-x86_64-v3" in name) * 100 +
+                ("x86_64" in name) * 10 +
+                (name.endswith(".7z")) * 5 +
+                (name.endswith(".zip")) * 1
+            )
+
+        assets.sort(key=score, reverse=True)
+
+        url = next(
+            (
+                a["browser_download_url"]
+                for a in assets
+                if "x86_64" in a["name"] and a["name"].endswith((".7z", ".zip"))
+            ),
+            None,
+        )
+
+        if not url:
+            raise RuntimeError("No compatible mpv build found")
+
+        os.makedirs(VENDOR_DIR, exist_ok=True)
+
+        click.echo(f"Downloading {url.split('/')[-1]}")
+
+        req = urllib.request.Request(url, headers={"User-Agent": "vaux-cli"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = r.read()
+
+        archive = io.BytesIO(data)
+
+        # ----------------------------------------------------------
+        # ZIP extraction
+        # ----------------------------------------------------------
+        if url.endswith(".zip"):
+            with zipfile.ZipFile(archive) as z:
+                for f in z.infolist():
+                    if f.filename.endswith("mpv.exe"):
+                        with z.open(f) as src, open(mpv_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        break
+
+        # ----------------------------------------------------------
+        # 7Z extraction (FIXED)
+        # ----------------------------------------------------------
+        else:
+            extracted = False
+
+            # A. Try system 7z (correct usage: file path, not stdin)
             try:
-                api_url = "https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/latest"
-                req = urllib.request.Request(api_url, headers={"User-Agent": "vaux-cli"})
-                with urllib.request.urlopen(req) as response:
-                    data = json.loads(response.read().decode())
-                    # Prefer the v3 release, fallback to standard 64-bit
-                    zip_url = next((a["browser_download_url"] for a in data.get("assets", []) 
-                                    if "mpv-x86_64-v3-" in a["name"] and (a["name"].endswith(".zip") or a["name"].endswith(".7z"))), None)
-                    if not zip_url:
-                        zip_url = next((a["browser_download_url"] for a in data.get("assets", []) 
-                                        if "mpv-x86_64-" in a["name"] and (a["name"].endswith(".zip") or a["name"].endswith(".7z"))), None)
-                
-                if zip_url:
-                    os.makedirs(vendor_dir, exist_ok=True)
-                    req = urllib.request.Request(zip_url, headers={"User-Agent": "vaux-cli"})
-                    with urllib.request.urlopen(req) as response:
-                        archive_data = io.BytesIO(response.read())
-                        target_path = os.path.join(vendor_dir, "mpv.exe")
-                        
-                        if zip_url.endswith(".7z"):
-                            try:
-                                import py7zr  # type: ignore
-                            except ImportError:
-                                click.echo("\nError: 'py7zr' is missing but required to extract mpv. Please run: pip install py7zr")
-                                return
-                            with py7zr.SevenZipFile(archive_data, mode='r') as z:
-                                for name in z.getnames():
-                                    if name.endswith("mpv.exe"):
-                                        file_dict = z.read(targets=[name])
-                                        with open(target_path, "wb") as target:
-                                            target.write(file_dict[name].getvalue())
-                                        break
-                        else:
-                            with zipfile.ZipFile(archive_data) as z:
-                                for file_info in z.infolist():
-                                    if file_info.filename.endswith("mpv.exe"):
-                                        source = z.open(file_info)
-                                        with open(target_path, "wb") as target:
-                                            shutil.copyfileobj(source, target)
-                                        break
-            except Exception as e:
-                click.echo(f"Failed to auto-download mpv: {e}")
+                with tempfile.TemporaryDirectory() as tmp:
+                    archive_path = os.path.join(tmp, "mpv.7z")
 
+                    with open(archive_path, "wb") as f:
+                        f.write(data)
 
-@click.command(
-    epilog="NOTE: vaux requires 'mpv' to play audio. You can download it here: https://mpv.io/installation/"
-)
+                    subprocess.run(
+                        ["7z", "x", "-y", f"-o{tmp}", archive_path],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        check=False,
+                    )
+
+                    for root, _, files in os.walk(tmp):
+                        if "mpv.exe" in files:
+                            shutil.copy2(os.path.join(root, "mpv.exe"), mpv_path)
+                            extracted = True
+                            break
+
+            except Exception:
+                pass
+
+            # B. fallback py7zr
+            if not extracted:
+                try:
+                    import py7zr
+                except ImportError:
+                    click.echo(
+                        "\nCannot extract .7z archive.\n"
+                        "Install one of:\n"
+                        "  - 7-Zip (recommended)\n"
+                        "  - pip install py7zr\n"
+                    )
+                    sys.exit(1)
+
+                with tempfile.TemporaryDirectory() as tmp:
+                    with py7zr.SevenZipFile(archive, mode="r") as z:
+                        z.extractall(path=tmp)
+
+                    for root, _, files in os.walk(tmp):
+                        if "mpv.exe" in files:
+                            shutil.copy2(os.path.join(root, "mpv.exe"), mpv_path)
+                            extracted = True
+                            break
+
+            if not extracted:
+                raise RuntimeError("Failed to extract mpv.exe")
+
+        click.echo("mpv installed successfully ✔")
+        _add_vendor_to_path()
+
+    except Exception as e:
+        click.echo(f"mpv setup failed: {e}")
+        sys.exit(1)
+
+# ----------------------------------------------------------------------
+# CLI
+# ----------------------------------------------------------------------
+@click.group(invoke_without_command=True)
+@click.pass_context
 @click.version_option(version=__version__, prog_name="vaux")
-@click.argument("room_id", required=False)
-@click.option("--username", "-u", help="Your display name.")
-@click.option(
-    "--server",
-    default="https://vaux.onrender.com",
-    envvar="VAUX_SERVER_URL",
-    show_default=True,
-    help="vaux server URL.",
-)
-def cli(room_id: str | None, username: str | None, server: str):
-    """vaux — listen together, in sync. Run without arguments to open the interactive lobby."""
+def cli(ctx):
+    """vaux — listen together in sync."""
+
     ensure_mpv()
 
-    if not room_id or not username:
-        lobby = LobbyApp(server_url=server)
+    if ctx.invoked_subcommand is None:
+        lobby = LobbyApp(server_url="https://vaux.onrender.com")
         lobby.run()
 
         if lobby.result is None:
@@ -110,8 +209,25 @@ def cli(room_id: str | None, username: str | None, server: str):
 
         room_id, username = lobby.result
 
-    app = VauxApp(room_id=room_id, username=username, server_url=server)
-    app.run()
+        VauxApp(
+            room_id=room_id,
+            username=username,
+            server_url="https://vaux.onrender.com"
+        ).run()
+
+
+@cli.command()
+@click.argument("room_id")
+@click.argument("username")
+def join(room_id, username):
+    """Join a room directly."""
+    ensure_mpv()
+
+    VauxApp(
+        room_id=room_id,
+        username=username,
+        server_url="https://vaux.onrender.com"
+    ).run()
 
 
 if __name__ == "__main__":
