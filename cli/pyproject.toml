@@ -31,3 +31,6 @@ vaux = "main:cli"
 [tool.setuptools]
 packages = ["vaux"]
 py-modules = ["main"]
+
+[tool.setuptools.package-data]
+vaux = ["room_slug_words.json"]

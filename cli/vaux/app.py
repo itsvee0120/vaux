@@ -21,7 +21,6 @@ import sys
 import shutil
 import json
 import socket
-import secrets
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -36,39 +35,9 @@ from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url
 from vaux.mpv import find_mpv
+from vaux.room_slug import generate_room_slug
 
 import subprocess
-
-
-# ── generateRoomSlug ──────────────────────────────────────────────────────
-# Same word lists and logic as the web client so slugs look consistent
-# across both interfaces. Uses secrets.randbelow for cryptographic quality.
-
-_ADJECTIVES = [
-    "amber", "arctic", "azure", "blazing", "crimson", "crystal", "drifting",
-    "echoing", "electric", "emerald", "floating", "frozen", "golden", "hollow",
-    "indigo", "jade", "lunar", "mystic", "neon", "obsidian", "onyx", "opal",
-    "phantom", "radiant", "rusty", "sacred", "silent", "silver", "solar",
-    "spectral", "stellar", "sunken", "twilight", "velvet", "vibrant", "violet",
-    "wandering", "wild", "winter", "wooden",
-]
-
-_NOUNS = [
-    "anchor", "bloom", "canyon", "circuit", "comet", "current", "dusk",
-    "ember", "forest", "harbor", "horizon", "lantern", "melody", "mirror",
-    "mosaic", "nebula", "ocean", "orbit", "petal", "prism", "pulse", "reef",
-    "relay", "ridge", "signal", "spark", "storm", "summit", "tide", "timber",
-    "tunnel", "valley", "vinyl", "vortex", "wave", "willow", "wind", "wraith",
-    "zenith", "zephyr",
-]
-
-def generate_room_slug() -> str:
-    adj    = _ADJECTIVES[secrets.randbelow(len(_ADJECTIVES))]
-    noun   = _NOUNS[secrets.randbelow(len(_NOUNS))]
-    suffix = 10 + secrets.randbelow(90)   # two-digit suffix, 10–99
-    return f"{adj}-{noun}-{suffix}"
-
-
 class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
