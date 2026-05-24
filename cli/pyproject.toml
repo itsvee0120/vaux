@@ -4,10 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vaux-cli"
-version = "0.1.27"
+version = "0.1.28"
 description = "A terminal client for vaux listening rooms."
 readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "Violet Nguyen", email = "nviolet0120@gmail.com" },
+]
+license = { text = "MIT" }
 dependencies = [
     "click",
     "textual",

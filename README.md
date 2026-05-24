@@ -306,3 +306,19 @@ Omit `--server` only when you intend to use the public hosted server.
 ## Why this project
 
 I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
+
+Okay, not entirely.
+
+This project was created because I wanted to learn how to use Socket.IO across a CLI application and a web app. It started as a fun hobby project and a learning exercise, and I decided to publish it so others can play around with it, learn from it, or build their own ideas based on what I've made.
+
+---
+
+## Author
+
+**Violet Nguyen** — [nviolet0120@gmail.com](mailto:nviolet0120@gmail.com)
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
+Copyright (c) 2026 Violet Nguyen

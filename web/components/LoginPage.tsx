@@ -269,6 +269,26 @@ export function LoginPage({
             Vee
           </a>
         </span>
+        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute left-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
+          <a
+            href="https://github.com/itsvee0120/vaux"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            Vaux on Github
+          </a>
+        </span>
+        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute right-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
+          <a
+            href="https://pypi.org/project/vaux-cli/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            Vaux on CLI
+          </a>
+        </span>
       </footer>
     </main>
   );

@@ -93,6 +93,18 @@ Issues: [https://github.com/itsvee0120/vaux/issues](https://github.com/itsvee012
 
 ---
 
-## Contact:
+## Contact
 
 [https://itsvee0120.github.io/violet-website/](https://itsvee0120.github.io/violet-website/)
+
+---
+
+## Author
+
+**Violet Nguyen** — [nviolet0120@gmail.com](mailto:nviolet0120@gmail.com)
+
+## License
+
+This project is licensed under the [MIT License](../LICENSE).
+
+Copyright (c) 2026 Violet Nguyen
