@@ -72,6 +72,8 @@ export default function Home() {
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const usernameRef = useRef(username);
+  /** Set when joinRoom emits room:join so the session rejoin effect does not emit again. */
+  const skipSessionRejoinRef = useRef(false);
 
   const restoring =
     hydrated && session !== null && screen === "lobby" && !rejoinFailed;
@@ -150,6 +152,11 @@ export default function Home() {
   useEffect(() => {
     if (!session || screen !== "lobby" || rejoinFailed) return;
 
+    if (skipSessionRejoinRef.current) {
+      skipSessionRejoinRef.current = false;
+      return;
+    }
+
     joinSocketRoom(session.roomId, session.username);
     const timeout = setTimeout(() => setRejoinFailed(true), 12_000);
     return () => clearTimeout(timeout);
@@ -192,6 +199,7 @@ export default function Home() {
     setRoomId(rid);
     setUsername(user);
     setRejoinFailed(false);
+    skipSessionRejoinRef.current = true;
     saveSession(rid, user);
     joinSocketRoom(rid, user);
   }

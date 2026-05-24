@@ -181,9 +181,8 @@ io.on("connection", (socket) => {
         username,
         role: room.members.length === 0 ? "host" : "listener",
       });
+      socket.to(roomId).emit("room:member_joined", { userId, username });
     }
-
-    socket.to(roomId).emit("room:member_joined", { userId, username });
 
     const member = getMember(room, userId);
 

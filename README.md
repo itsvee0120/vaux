@@ -3,7 +3,8 @@
 A real-time music listening room - join a room, build a queue together, vote on tracks, and listen in sync. Available as both a web app and a terminal CLI.
 
 ### 🌐 Live Demo: https://vaux-ten.vercel.app/
-### 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/ 
+
+### 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/
 
 ---
 
@@ -106,16 +107,18 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 
 We highly recommend using [`pipx`](https://pipx.pypa.io/) to install the terminal client globally so it is always available on your drive and not hidden inside a temporary Anaconda environment:
 
-Latest Version on Pypi: https://pypi.org/project/vaux-cli/ 
+Latest Version on Pypi: https://pypi.org/project/vaux-cli/
 
 ```bash
 pipx install vaux-cli
 ```
-or 
+
+or
 
 ```bash
 pip install vaux-cli
 ```
+
 _Note: The CLI requires `mpv` to play audio. If you are on Windows, the app will automatically offer to download a portable version of `mpv` for you on first run! Linux/macOS users should install `mpv` via their package manager (e.g., `apt install mpv` or `brew install mpv`)._
 
 Once installed, you can launch it from anywhere:
@@ -183,7 +186,6 @@ Example:
 /host john
 ```
 
-
 ## Running locally
 
 ### Prerequisites
@@ -220,6 +222,8 @@ npm run dev
 
 ### 4. Start the CLI locally
 
+The CLI defaults to the hosted server (`https://vaux.onrender.com`). When you run the **local** server and web app, you must point the CLI at `http://localhost:4000` or it will join a different backend — chat, queue, and playback will not sync with the browser.
+
 ```bash
 cd cli
 python -m venv .venv
@@ -227,10 +231,18 @@ python -m venv .venv
 source .venv/bin/activate # macOS/Linux
 pip install -r requirements.txt
 
-# Open the interactive lobby:
-python main.py
-# Or bypass the lobby to join a room directly:
-python main.py my-room --username yourname
+# Open the interactive lobby (local server):
+python main.py --server http://localhost:4000
+
+# Or join a room directly:
+python main.py --server http://localhost:4000 my-room --username yourname
+```
+
+If you installed `vaux-cli` from PyPI instead of running from source, use the same flag:
+
+```bash
+vaux --server http://localhost:4000
+vaux --server http://localhost:4000 my-room -u yourname
 ```
 
 ---
@@ -248,6 +260,18 @@ PORT=4000
 ```
 NEXT_PUBLIC_SERVER_URL=http://localhost:4000
 ```
+
+### CLI (local development)
+
+Pass `--server` so the CLI uses the same backend as the web app:
+
+```
+--server http://localhost:4000
+
+example: python main.py --server http://localhost:4000
+```
+
+Omit `--server` only when you intend to use the public hosted server.
 
 ---
 
