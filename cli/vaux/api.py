@@ -27,6 +27,22 @@ class SearchResult:
     title: str
     channel: str
     thumbnail: str
+    duration: float = 0.0
+
+
+async def ping_server(server_url: str, timeout: float = 30.0) -> None:
+    """Fire-and-forget GET to /health to wake a cold-started server.
+
+    Free-tier hosts can take 10–30s to spin up after idle, which would otherwise
+    show up as a search timeout on the user's first action. Errors are swallowed
+    — this is a best-effort warm-up, not a hard dependency.
+    """
+    url = f"{server_url.rstrip('/')}/health"
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.get(url, timeout=timeout)
+    except Exception:
+        pass
 
 
 async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
@@ -44,6 +60,7 @@ async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
             title=r["title"],
             channel=r["channel"],
             thumbnail=r["thumbnail"],
+            duration=r.get("duration", 0.0) or 0.0,
         )
         for r in data.get("results", [])
     ]

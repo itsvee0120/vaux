@@ -92,8 +92,15 @@ export function LobbyPage({
 }: LobbyPageProps) {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekUi, setSeekUi] = useState(0);
+  const [copiedRoom, setCopiedRoom] = useState(false);
   const syncedPosition = getSyncedPosition(playback);
   const seekValue = isSeeking ? seekUi : syncedPosition;
+
+  function handleCopyRoom() {
+    navigator.clipboard.writeText(roomId);
+    setCopiedRoom(true);
+    setTimeout(() => setCopiedRoom(false), 1500);
+  }
 
   const nowPlaying = playback.videoId
     ? {
@@ -105,7 +112,7 @@ export function LobbyPage({
     : null;
 
   return (
-    <main className="flex min-h-dvh w-full flex-col bg-black font-mono text-white">
+    <main className="flex h-dvh w-full flex-col overflow-hidden bg-black font-mono text-white">
       <div className="flex items-center gap-2 border-b border-vaux-green px-3 py-3 sm:gap-3 sm:px-6">
         <button
           type="button"
@@ -116,9 +123,20 @@ export function LobbyPage({
           vaux
         </button>
         <span className="shrink-0 text-zinc-600">/</span>
-        <span className="min-w-0 truncate text-sm text-vaux-green-dark">
+        <span
+          className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
+            copiedRoom
+              ? "text-vaux-green"
+              : "text-vaux-green-dark hover:text-vaux-green"
+          }`}
+          onClick={handleCopyRoom}
+          title="Copy room name"
+        >
           {roomId}
         </span>
+        {copiedRoom && (
+          <span className="shrink-0 text-xs text-vaux-green">✓ copied</span>
+        )}
         <span className="ml-auto min-w-0 truncate text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
@@ -149,7 +167,7 @@ export function LobbyPage({
 
       {/* Video Components Start Here */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 p-4">
           <div className="overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
             {playback.videoId ? (
               <>
@@ -248,7 +266,8 @@ export function LobbyPage({
                   {!isHost && playback.isPlaying && (
                     <p className="mt-2 text-xs text-zinc-600">
                       synced · {formatTime(syncedPosition)}
-                      {playback.duration > 0 && ` / ${formatTime(playback.duration)}`}
+                      {playback.duration > 0 &&
+                        ` / ${formatTime(playback.duration)}`}
                     </p>
                   )}
                 </div>
@@ -264,7 +283,7 @@ export function LobbyPage({
           </div>
 
           {/* Search/ Result & add Tracks Components Start Here */}
-          <div>
+          <div className="flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex gap-2">
               <input
                 className="flex-1 rounded border border-vaux-green-dark/40 bg-zinc-900 px-3 py-2 text-sm focus:border-vaux-green focus:outline-none"
@@ -289,8 +308,8 @@ export function LobbyPage({
               </button>
             </div>
 
-            {searchResults.length > 0 && (
-              <div className="flex flex-col gap-2">
+            {searchResults.length > 0 ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 {searchResults.map((r) => (
                   <div
                     key={r.videoId}
@@ -318,12 +337,16 @@ export function LobbyPage({
                   </div>
                 ))}
               </div>
+            ) : (
+              <p className="text-m uppercase text-center tracking-widest text-zinc-700">
+                results will appear here
+              </p>
             )}
           </div>
         </div>
 
         {/* Queue Components Start Here */}
-        <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:border-t-0 lg:border-l">
+        <div className="flex min-h-0 w-full flex-1 shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:flex-none lg:border-t-0 lg:border-l">
           {/* Host Components Start Here */}
           {isHost && members.filter((m) => m.role !== "host").length > 0 && (
             <div className="border-b border-vaux-green-dark p-3">
@@ -444,14 +467,19 @@ export function LobbyPage({
             <p className="mb-1 px-3 pt-2 text-xs uppercase tracking-widest text-vaux-green">
               chat
             </p>
-            <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
               {messages.map((m, i) => (
-                <div key={i} className="text-xs">
+                <div
+                  key={i}
+                  className="text-xs break-words [overflow-wrap:anywhere]"
+                >
                   {m.system ? (
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (
                     <>
-                      <span className="text-vaux-green">{m.username}: </span>
+                      <span className="text-vaux-green">
+                        {m.username.slice(0, 20)}:{" "}
+                      </span>
                       <span className="text-vaux-light">{m.text}</span>
                     </>
                   )}
@@ -459,14 +487,24 @@ export function LobbyPage({
               ))}
               <div ref={chatEndRef} />
             </div>
-            <div className="flex gap-2 p-2">
+            <div className="relative flex gap-2 p-2">
               <input
                 className="flex-1 rounded border border-vaux-green-dark bg-zinc-900 px-2 py-1 text-xs focus:border-vaux-light focus:outline-none"
                 placeholder="say something..."
                 value={chatInput}
                 onChange={(e) => onChatInputChange(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSendChat()}
+                maxLength={500}
               />
+              {chatInput.length > 400 && (
+                <span
+                  className={`pointer-events-none absolute right-14 top-1/2 -translate-y-1/2 text-xs ${
+                    chatInput.length >= 500 ? "text-[#C44545]" : "text-zinc-600"
+                  }`}
+                >
+                  {500 - chatInput.length}
+                </span>
+              )}
               <button
                 className="rounded bg-vaux-green-dark px-3 py-2 text-xs hover:bg-vaux-green cursor-pointer transition-colors"
                 onClick={onSendChat}

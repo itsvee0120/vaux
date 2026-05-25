@@ -57,13 +57,14 @@ class VauxSocket:
         })
 
     async def add_to_queue(self, room_id: str, video_id: str, title: str,
-                           channel: str, thumbnail: str):
+                           channel: str, thumbnail: str, duration: float = 0.0):
         await self.sio.emit("queue:add", {
             "roomId": room_id,
             "videoId": video_id,
             "title": title,
             "channel": channel,
             "thumbnail": thumbnail,
+            "duration": duration,
         })
 
     async def vote(self, room_id: str, item_id: str, value: int):
