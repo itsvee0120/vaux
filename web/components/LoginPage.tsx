@@ -53,7 +53,7 @@ export function LoginPage({
       <LoginBackground />
 
       <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12">
-        <div className="flex w-full max-w-[17.5rem] min-w-0 flex-col gap-3 sm:max-w-xs sm:gap-4 md:max-w-sm">
+        <div className="flex w-full max-w-[17.5rem] min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/60 bg-vaux-bg-dark/70 p-4 shadow-xl shadow-black/30 backdrop-blur-md sm:max-w-xs sm:gap-4 sm:p-5 md:max-w-sm md:p-6">
           <header className="text-center sm:text-left">
             <h1 className="font-bold leading-[0.95] tracking-tight text-vaux-green text-[clamp(2.5rem,14vw,4.75rem)] sm:text-[clamp(2.75rem,12vw,5rem)]">
               VAUX
@@ -164,8 +164,18 @@ export function LoginPage({
         </div>
       </div>
 
-      <footer className="relative z-30 flex shrink-0 justify-center border-t border-zinc-800/40 bg-vaux-bg-dark/95 px-[max(1rem,env(safe-area-inset-left))] py-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur-sm sm:py-3">
-        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500">
+      <footer className="relative z-30 flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-2 border-t border-zinc-800/40 bg-vaux-bg-dark/95 px-[max(0.75rem,env(safe-area-inset-left))] py-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] pr-[max(0.75rem,env(safe-area-inset-right))] backdrop-blur-sm sm:flex-nowrap sm:justify-between sm:py-3">
+        <span className="order-2 cursor-pointer rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 hover:bg-vaux-green hover:font-bold hover:text-black sm:order-1 sm:text-zinc-500">
+          <a
+            href="https://github.com/itsvee0120/vaux"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            Vaux on Github
+          </a>
+        </span>
+        <span className="order-1 w-full rounded-xl bg-vaux-bg px-3 py-1.5 text-center text-xs text-zinc-400 sm:order-2 sm:w-auto sm:text-zinc-500">
           Made with <span aria-label="love">{"\u{1F497}"}</span>
           {" by "}
           <a
@@ -177,17 +187,7 @@ export function LoginPage({
             Vee
           </a>
         </span>
-        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute left-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
-          <a
-            href="https://github.com/itsvee0120/vaux"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            Vaux on Github
-          </a>
-        </span>
-        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute right-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
+        <span className="order-3 cursor-pointer rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 hover:bg-vaux-green hover:font-bold hover:text-black sm:text-zinc-500">
           <a
             href="https://pypi.org/project/vaux-cli/"
             target="_blank"
