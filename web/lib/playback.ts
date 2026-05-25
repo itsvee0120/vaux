@@ -4,6 +4,7 @@ export type PlaybackState = {
   channel: string | null;
   thumbnail: string | null;
   trackId: string | null;
+  duration: number;
   positionSeconds: number;
   isPlaying: boolean;
   updatedAt: number;
@@ -25,6 +26,7 @@ export const EMPTY_PLAYBACK: PlaybackState = {
   channel: null,
   thumbnail: null,
   trackId: null,
+  duration: 0,
   positionSeconds: 0,
   isPlaying: false,
   updatedAt: Date.now(),

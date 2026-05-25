@@ -4,6 +4,7 @@ export type Track = {
   title: string;
   channel: string;
   thumbnail: string;
+  duration: number;
   votes: number;
   addedBy: string;
 };
@@ -19,4 +20,5 @@ export type SearchResult = {
   title: string;
   channel: string;
   thumbnail: string;
+  duration: number;
 };

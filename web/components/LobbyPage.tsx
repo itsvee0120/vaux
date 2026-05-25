@@ -24,6 +24,13 @@ import {
   LogOut,
 } from "lucide-react";
 
+function formatTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
 type LobbyPageProps = {
   roomId: string;
   username: string;
@@ -167,7 +174,7 @@ export function LobbyPage({
                         <input
                           type="range"
                           min={0}
-                          max={600}
+                          max={playback.duration || 600}
                           step={0.5}
                           value={seekValue}
                           className="flex-1 rounded-full h-1 appearance-none transition-all outline-none cursor-pointer focus:outline-none
@@ -206,15 +213,24 @@ export function LobbyPage({
                             setIsSeeking(false);
                           }}
                         />
-                        <span className="w-10 text-right text-xs tabular-nums text-vaux-light">
-                          {Math.floor(seekValue)}s
+                        <span className="text-right text-xs tabular-nums text-vaux-light">
+                          {formatTime(seekValue)}
+                          {playback.duration > 0 && (
+                            <>
+                              <span className="text-vaux-green-dark">
+                                {" / "}
+                              </span>
+                              {formatTime(playback.duration)}
+                            </>
+                          )}
                         </span>
                       </>
                     )}
                   </div>
                   {!isHost && playback.isPlaying && (
                     <p className="mt-2 text-xs text-zinc-600">
-                      synced · {Math.floor(syncedPosition)}s
+                      synced · {formatTime(syncedPosition)}
+                      {playback.duration > 0 && ` / ${formatTime(playback.duration)}`}
                     </p>
                   )}
                 </div>
