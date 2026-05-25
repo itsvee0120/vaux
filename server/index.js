@@ -180,6 +180,31 @@ const MAX_MEMBERS_PER_ROOM = 50;
 const MAX_QUEUE_LENGTH = 100;
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // delete rooms with 0 members after 10 min
 
+// Track metadata bounds. Server controls thumbnails entirely to prevent
+// tracking-pixel attacks (client supplies a URL pointing at attacker.com,
+// and every other room member's browser fetches it on render, leaking IPs).
+// Title/channel are still client-supplied but capped and sanitized.
+const YT_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
+const MAX_TITLE_LEN = 200;
+const MAX_CHANNEL_LEN = 100;
+const MAX_DURATION_SEC = 24 * 60 * 60; // 24h — anything longer is bogus (honestly I have seen an 11 hours video of a dude explaining how computer works, check it out!)
+
+function thumbnailFor(videoId) {
+  // Always YouTube's own CDN. No client URLs ever stored in queue items.
+  return `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
+}
+
+function sanitizeText(value, maxLen) {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, maxLen);
+}
+
+function sanitizeDuration(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0 || n > MAX_DURATION_SEC) return 0;
+  return n;
+}
+
 // Read-only lookup. All handlers except room:join use this — phantom rooms
 // can no longer be conjured by sending queue:add / host:transfer / playback:*
 // with arbitrary room ids.
@@ -388,9 +413,18 @@ io.on("connection", (socket) => {
   // ── QUEUE ──
   socket.on(
     "queue:add",
-    ({ roomId, videoId, title, channel, thumbnail, duration }) => {
+    // Note: client-supplied `thumbnail` is intentionally NOT destructured.
+    ({ roomId, videoId, title, channel, duration }) => {
       if (!socket.data.username) return;
       if (!queueAddLimiter(socket, "queue:add")) return;
+
+      // Reject anything that doesn't look like a YouTube video id. This is
+      // the only field the server can't easily reconstruct, so it must be
+      // validated tightly.
+      if (typeof videoId !== "string" || !YT_VIDEO_ID_REGEX.test(videoId)) {
+        return;
+      }
+
       const room = getRoom(roomId);
       if (!room) return;
 
@@ -404,10 +438,12 @@ io.on("connection", (socket) => {
       const item = {
         id: Date.now().toString(),
         videoId,
-        title,
-        channel,
-        thumbnail,
-        duration: duration ?? 0,
+        title: sanitizeText(title, MAX_TITLE_LEN) || "Untitled",
+        channel: sanitizeText(channel, MAX_CHANNEL_LEN) || "Unknown",
+        // Always server-derived. Discards any thumbnail the client sent —
+        // kills the tracking-pixel privacy leak.
+        thumbnail: thumbnailFor(videoId),
+        duration: sanitizeDuration(duration),
         votes: 0,
         addedBy: socket.data.username,
         addedById: socket.data.userId,
