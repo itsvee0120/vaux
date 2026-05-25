@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/itsvee0120/vaux/main/web/components/ui/vaux_logo.png" alt="Vaux" width="120" />
+</p>
+
 # Vaux CLI
 
 A terminal client for [Vaux](https://github.com/itsvee0120/vaux) listening rooms. Listen to YouTube audio in sync with friends directly from your terminal.
