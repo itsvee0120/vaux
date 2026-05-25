@@ -124,8 +124,10 @@ class MPVPlayer:
             
         self.proc = subprocess.Popen(cmd, **kwargs)
 
-    def set_volume(self, volume: int):
-        command = {"command": ["set_property", "volume", volume]}
+    def _send_ipc(self, command: dict) -> None:
+        """Sends a JSON-IPC command to the running mpv. Silently fails if mpv
+        isn't up yet or the pipe/socket isn't ready — callers don't need to
+        care, since any future state-sync broadcast will retry."""
         payload = json.dumps(command) + "\n"
         try:
             if sys.platform == "win32":
@@ -139,6 +141,17 @@ class MPVPlayer:
                 s.close()
         except Exception:
             pass
+
+    def set_volume(self, volume: int):
+        self._send_ipc({"command": ["set_property", "volume", volume]})
+
+    def seek(self, position_seconds: float):
+        """Jumps to an absolute position in the current track via mpv IPC.
+        Used to mirror host scrubbing without restarting the player (which
+        would re-buffer and create an audio gap)."""
+        self._send_ipc(
+            {"command": ["seek", float(position_seconds), "absolute"]}
+        )
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -1023,6 +1036,11 @@ class VauxApp(App):
         self.search_results: list[SearchResult] = []
         self.last_video_id = None
         self.player_running = False
+        # Tracks the updatedAt of the last server playback state we acted on.
+        # Lets _apply_playback distinguish a fresh broadcast (host scrubbed,
+        # paused, etc.) from a redundant re-apply after, e.g., a member-join
+        # event so we don't issue spurious mpv seeks.
+        self._last_applied_updated_at: float = 0.0
         self.stream_cache: dict[str, str] = {}
         self.volume = 100
         self._volume_before_mute = 100
@@ -1235,15 +1253,29 @@ class VauxApp(App):
         """Syncs the python-mpv player instance with the server playback state."""
         if not getattr(self, "player", None):
             return
-            
+
         s = self.playback
         if not s.video_id:
             self.player.stop()
             self.last_video_id = None
             self.player_running = False
+            self._last_applied_updated_at = s.updated_at
             return
-            
+
         needs_play = s.is_playing and (s.video_id != self.last_video_id or not self.player_running)
+        # Seek-while-playing: same track, mpv already running, but the host
+        # scrubbed (or otherwise re-anchored) the timeline. Without this branch
+        # mpv keeps playing from its old position until the next pause/play
+        # toggle, which is the bug "scrubbing on web doesn't sync with cli".
+        # We require a new updatedAt so initial-join / member-join re-applies
+        # don't trigger gratuitous seeks.
+        is_seek = (
+            s.is_playing
+            and not needs_play
+            and s.video_id == self.last_video_id
+            and self.player_running
+            and s.updated_at != self._last_applied_updated_at
+        )
 
         if needs_play:
             stream_url = self.stream_cache.get(s.video_id)
@@ -1269,6 +1301,11 @@ class VauxApp(App):
         elif not s.is_playing and self.player_running:
             self.player.stop()
             self.player_running = False
+
+        elif is_seek:
+            self.player.seek(s.synced_position())
+
+        self._last_applied_updated_at = s.updated_at
 
     async def _trigger_ended(self):
         """Tells the server the track finished so it can auto-play the next queue item."""
