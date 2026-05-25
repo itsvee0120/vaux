@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Toaster, toast } from "sonner";
 import type { PlaybackState } from "@/lib/playback";
 import { getSyncedPosition } from "@/lib/playback";
 import { decodeHTML } from "@/lib/decode-html";
@@ -143,6 +144,141 @@ export function LobbyPage({
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  // --- Mobile-only notifications ---------------------------------------
+  // Three things compete for attention on mobile (where panels are tabbed
+  // instead of all on-screen): tracks added to the queue, new chat
+  // messages, and host transfers. Strategy:
+  //   1. Unread badges on Queue/Chat tabs — persistent until the user
+  //      opens that tab.
+  //   2. Toast notifications via sonner — content preview (who/what)
+  //      that fades on its own. Skipped if the user is already on that
+  //      tab (the panel is already visible).
+  //   3. Auto-switch to the Player tab when this user becomes the host
+  //      so the controls are visible immediately.
+  // All three are gated by !isDesktop so desktop users see none of it.
+  const [lastSeenQueueLen, setLastSeenQueueLen] = useState(0);
+  const [lastSeenChatLen, setLastSeenChatLen] = useState(0);
+  // Refs track the previous length across renders without retriggering
+  // effects, and let us seed `lastSeen*` to the size of the initial
+  // socket sync (so the badge starts at 0 instead of "everything is new").
+  const prevQueueLenRef = useRef(queue.length);
+  const prevMessagesLenRef = useRef(messages.length);
+  const prevIsHostRef = useRef(isHost);
+  // Toasts/badges are disabled for ~1.5s after mount. That window covers
+  // the initial socket payload (queue + chat history + host info) so we
+  // don't fire a wave of notifications the moment the user joins.
+  // Kept in state (not a ref) because we also read it during render to
+  // gate the host -> player auto-tab-switch below, and refs can't be
+  // accessed during render in React 19.
+  const [notificationsReady, setNotificationsReady] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setNotificationsReady(true);
+      setLastSeenQueueLen(prevQueueLenRef.current);
+      setLastSeenChatLen(prevMessagesLenRef.current);
+    }, 1500);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    const prev = prevQueueLenRef.current;
+    prevQueueLenRef.current = queue.length;
+    if (!notificationsReady || isDesktop) return;
+    if (queue.length <= prev) return;
+    // findLast picks the most recent track that isn't ours, in case a
+    // batch arrives at once (e.g. a multi-add or backfill).
+    const added = queue.slice(prev).findLast((t) => t.addedBy !== username);
+    if (!added) return;
+    if (activeTab === "queue") return;
+    toast(`🎵 ${added.addedBy} added`, {
+      description: decodeHTML(added.title),
+      action: {
+        label: "View",
+        onClick: () => setActiveTab("queue"),
+      },
+    });
+  }, [queue, isDesktop, activeTab, username, notificationsReady]);
+
+  useEffect(() => {
+    const prev = prevMessagesLenRef.current;
+    prevMessagesLenRef.current = messages.length;
+    if (!notificationsReady || isDesktop) return;
+    if (messages.length <= prev) return;
+    const incoming = messages
+      .slice(prev)
+      .findLast((m) => !m.system && m.username !== username);
+    if (!incoming) return;
+    if (activeTab === "chat") return;
+    toast(`💬 ${incoming.username}`, {
+      description: incoming.text,
+      action: {
+        label: "View",
+        onClick: () => setActiveTab("chat"),
+      },
+    });
+  }, [messages, isDesktop, activeTab, username, notificationsReady]);
+
+  useEffect(() => {
+    const prev = prevIsHostRef.current;
+    prevIsHostRef.current = isHost;
+    if (!notificationsReady || isDesktop) return;
+    if (prev === isHost) return;
+    if (isHost) {
+      // Becoming host is the one event important enough to interrupt the
+      // current tab — the player controls are now live for this user.
+      // The actual tab switch happens via the render-time conditional
+      // below (setState in an effect would trip
+      // react-hooks/set-state-in-effect).
+      toast("👑 You're now the host", {
+        description: "Player controls are live for you - view in Queue tab.",
+      });
+    } else {
+      const newHost = members.find((m) => m.role === "host");
+      toast(`👑 ${newHost?.username ?? "Someone else"} is now the host`);
+    }
+  }, [isHost, isDesktop, members, notificationsReady]);
+
+  // --- Render-time state syncs --------------------------------------
+  // The three setState calls below used to live inside useEffects, but
+  // react-hooks/set-state-in-effect (new in React 19) forbids that
+  // because the resulting cascading commit hurts performance. The
+  // recommended replacement is to compare against a previous value
+  // stored in state and call setState during render — React detects the
+  // pattern, restarts the render in-place, and avoids the extra commit.
+  //
+  // Auto-switch to the Player tab the moment this user becomes host.
+  const [prevHostFlag, setPrevHostFlag] = useState(isHost);
+  if (prevHostFlag !== isHost) {
+    setPrevHostFlag(isHost);
+    if (isHost && !isDesktop && notificationsReady) {
+      setActiveTab("player");
+    }
+  }
+  // Reset the unread badge as soon as the user opens that tab (and keep
+  // it at 0 while they stay there, even if more items arrive).
+  if (
+    !isDesktop &&
+    activeTab === "queue" &&
+    lastSeenQueueLen !== queue.length
+  ) {
+    setLastSeenQueueLen(queue.length);
+  }
+  if (
+    !isDesktop &&
+    activeTab === "chat" &&
+    lastSeenChatLen !== messages.length
+  ) {
+    setLastSeenChatLen(messages.length);
+  }
+
+  const queueUnread = !isDesktop
+    ? Math.max(0, queue.length - lastSeenQueueLen)
+    : 0;
+  const chatUnread = !isDesktop
+    ? Math.max(0, messages.length - lastSeenChatLen)
+    : 0;
+
   // Auto-open the help modal the first time a user lands in a room. The
   // 1500ms delay lets the player + queue + chat finish their initial render
   // so the modal feels like an intentional welcome rather than a load-time
@@ -195,15 +331,12 @@ export function LobbyPage({
     isHost && members.filter((m) => m.role !== "host").length > 0 ? (
       <div className="border-b border-vaux-green-dark p-3">
         <DropdownMenu>
-          {/* Nested `asChild` lets a single <button> serve as both the
-              tooltip's anchor and the dropdown's trigger — Radix merges the
-              event listeners and ref so hover shows the tooltip and click
-              opens the menu. */}
           <Tooltip>
             <TooltipTrigger asChild>
               <DropdownMenuTrigger className="flex w-full cursor-pointer items-center gap-2 text-xs uppercase tracking-widest text-vaux-green hover:text-vaux-light">
                 <Users size={12} />
-                listeners ({members.filter((m) => m.role !== "host").length})
+                View listeners or Transfer Host(
+                {members.filter((m) => m.role !== "host").length})
                 <ChevronDownIcon className="ml-auto" />
               </DropdownMenuTrigger>
             </TooltipTrigger>
@@ -623,13 +756,14 @@ export function LobbyPage({
       label: "Queue",
       description: "What's playing next — vote tracks up or down",
       icon: <ListMusic size={16} />,
-      badge: queue.length || undefined,
+      badge: queueUnread || undefined,
     },
     {
       id: "chat",
       label: "Chat",
       description: "Talk with everyone in the room",
       icon: <MessageSquare size={16} />,
+      badge: chatUnread || undefined,
     },
   ];
 
@@ -752,7 +886,7 @@ export function LobbyPage({
                 state, scroll positions, chat input draft, and chatEndRef all
                 survive tab switches without remounting. */}
             <div
-              className={`flex min-h-0 flex-1 flex-col p-4 ${
+              className={`flex min-h-0 flex-1 flex-col p-4 pt-20 ${
                 activeTab === "player" ? "" : "hidden"
               }`}
             >
@@ -789,6 +923,24 @@ export function LobbyPage({
       )}
 
       <HelpModal open={helpOpen} onOpenChange={handleHelpOpenChange} />
+      {/* Toaster portals to <body>, so its DOM position doesn't matter.
+          Position is top-center so it never collides with the bottom
+          MobileTabBar. Toasts are only fired in mobile/tab mode (all
+          three notification effects above bail out when isDesktop). */}
+      <Toaster
+        position="top-center"
+        theme="dark"
+        toastOptions={{
+          classNames: {
+            toast:
+              "!bg-zinc-900 !border-vaux-green-dark !text-vaux-light !font-mono",
+            title: "!text-vaux-light",
+            description: "!text-zinc-400",
+            actionButton:
+              "!bg-vaux-green !text-black !font-mono hover:!bg-vaux-light",
+          },
+        }}
+      />
     </main>
   );
 }
