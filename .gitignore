@@ -27,3 +27,4 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 server/yt-dlp.exe
+server/yt-dlp.exe.bak
