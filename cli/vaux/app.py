@@ -351,7 +351,8 @@ class BugReportModal(ModalScreen[None]):
             yield Static(
                 "Tip: close this overlay, then press [b]Ctrl+P[/b] to open the\n"
                 "command palette and choose [b]Save screenshot[/b] — vaux will write an SVG of the current screen.\n"
-                "You can attach it to your report.",
+                "You can attach it to your report.\n\n"
+                "[b]Security note:[/b] If this issue involves sensitive security concerns, please use the official Google Form instead of submitting it through GitHub issues.",
                 id="bug-note",
             )
             yield Button("Close", id="bug-close")

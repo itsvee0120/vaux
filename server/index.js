@@ -105,10 +105,12 @@ app.get("/youtube/search", searchLimiter, async (req, res) => {
       videoId: item.id,
       title: item.title,
       channel: item.uploader || item.channel || "YouTube",
-      thumbnail:
-        item.thumbnails?.length > 0
-          ? item.thumbnails[0].url
-          : `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`,
+      // Server-derived, same as queue items. yt-dlp's `thumbnails[0].url`
+      // can point at any host the extractor felt like returning — using it
+      // would reopen the tracking-pixel hole fix #4 closed on the queue
+      // path, just one step earlier in the flow (search results render
+      // before the user even clicks add).
+      thumbnail: thumbnailFor(item.id),
       duration: item.duration ?? 0,
     }));
 
@@ -187,7 +189,7 @@ const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // delete rooms with 0 members after 1
 const YT_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const MAX_TITLE_LEN = 200;
 const MAX_CHANNEL_LEN = 100;
-const MAX_DURATION_SEC = 24 * 60 * 60; // 24h — anything longer is bogus (honestly I have seen an 11 hours video of a dude explaining how computer works, check it out!)
+const MAX_DURATION_SEC = 24 * 60 * 60; // 24h — anything longer is bogus
 
 function thumbnailFor(videoId) {
   // Always YouTube's own CDN. No client URLs ever stored in queue items.
@@ -604,42 +606,103 @@ io.on("connection", (socket) => {
 // ─────────────────────────────
 const PORT = process.env.PORT || 4000;
 
+// Pin yt-dlp to a known release AND a known hash. Auto-fetching "latest"
+// means a compromised or maliciously published yt-dlp release lands on
+// the next server boot without review. The hash is pinned in source —
+// not fetched alongside the binary — so an attacker who publishes a
+// malicious release can't also publish a matching SHA2-256SUMS file and
+// have it pass verification. The trust anchor lives here, in vaux's repo.
+//
+// Values are GitHub's published asset digests for the tagged release,
+// equivalent to the entries in SHA2-256SUMS for the same tag. To rotate:
+//   1. Pick a release: https://github.com/yt-dlp/yt-dlp/releases
+//   2. Pull its asset digests (and ideally also verify SHA2-256SUMS.sig
+//      against the yt-dlp PGP key at yt-dlp/yt-dlp:master/public.key):
+//        curl -s https://api.github.com/repos/yt-dlp/yt-dlp/releases/tags/<TAG> \
+//          | jq -r '.assets[] | select(.name=="yt-dlp" or .name=="yt-dlp.exe") | "\(.name) \(.digest)"'
+//   3. Update YT_DLP_VERSION + YT_DLP_SHA256 below.
+//   4. Delete server/yt-dlp(.exe) so the next boot redownloads and reverifies.
+const YT_DLP_VERSION = "2026.03.17";
+const YT_DLP_SHA256 = {
+  "yt-dlp.exe":
+    "3db811b366b2da47337d2fcfdfe5bbd9a258dad3f350c54974f005df115a1545",
+  "yt-dlp": "3bda0968a01cde70d26720653003b28553c71be14dcb2e5f4c24e9921fdad745",
+};
+const YT_DLP_RELEASE_BASE = `https://github.com/yt-dlp/yt-dlp/releases/download/${YT_DLP_VERSION}`;
+
+function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest("hex");
+}
+
+async function downloadAndVerify(binaryPath, binaryName, expectedSha256) {
+  const url = `${YT_DLP_RELEASE_BASE}/${binaryName}`;
+  console.log(`[setup] Downloading yt-dlp ${YT_DLP_VERSION} from ${url}...`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
+
+  // Hash in memory before touching disk. A blob that fails verification
+  // never lands on the filesystem and never gets a chance to be spawned
+  // by yt-dlp-wrap on a botched cleanup path.
+  const buf = Buffer.from(await res.arrayBuffer());
+  const actual = crypto.createHash("sha256").update(buf).digest("hex");
+  if (actual !== expectedSha256) {
+    throw new Error(
+      `yt-dlp checksum mismatch — refusing to run.\n` +
+        `  expected: ${expectedSha256}\n` +
+        `  actual:   ${actual}\n` +
+        `Possible supply-chain tampering, republished release, or wrong YT_DLP_VERSION pin.`,
+    );
+  }
+  fs.writeFileSync(binaryPath, buf);
+  if (process.platform !== "win32") fs.chmodSync(binaryPath, "755");
+  console.log(`[setup] yt-dlp ${YT_DLP_VERSION} downloaded and verified.`);
+}
+
 async function initializeServer() {
   const binaryName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
   const binaryPath = path.join(__dirname, binaryName);
+  const expectedSha256 = YT_DLP_SHA256[binaryName];
 
-  if (!fs.existsSync(binaryPath)) {
-    console.log(`[setup] Downloading yt-dlp to ${binaryPath}...`);
+  if (!expectedSha256) {
+    // No pinned hash for this platform — refusing to boot is the only safe
+    // option. Silently defaulting to "trust whatever's on disk" defeats the
+    // entire point of this gate.
+    throw new Error(
+      `no pinned SHA-256 for asset "${binaryName}" — refusing to start without supply-chain verification`,
+    );
+  }
 
-    const downloadUrl =
-      process.platform === "win32"
-        ? "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-        : "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp";
-
-    const res = await fetch(downloadUrl);
-    if (!res.ok) throw new Error(`Download failed: ${res.statusText}`);
-    fs.writeFileSync(binaryPath, Buffer.from(await res.arrayBuffer()));
-
-    if (process.platform !== "win32") fs.chmodSync(binaryPath, "755");
-    console.log("[setup] yt-dlp downloaded successfully.");
+  if (fs.existsSync(binaryPath)) {
+    const actual = sha256File(binaryPath);
+    if (actual === expectedSha256) {
+      console.log(
+        `[setup] existing yt-dlp matches pinned ${YT_DLP_VERSION} (verified).`,
+      );
+    } else {
+      console.warn(
+        `[setup] existing yt-dlp does NOT match pinned ${YT_DLP_VERSION}; re-downloading.`,
+      );
+      fs.unlinkSync(binaryPath);
+      await downloadAndVerify(binaryPath, binaryName, expectedSha256);
+    }
+  } else {
+    await downloadAndVerify(binaryPath, binaryName, expectedSha256);
   }
 
   ytdlp = new YTDlpWrap(binaryPath);
 
-  // Always update yt-dlp to latest on startup
-  if (fs.existsSync(binaryPath)) {
-    console.log("[setup] Updating yt-dlp...");
-    try {
-      await ytdlp.execPromise(["--update-to", "stable"]);
-      console.log("[setup] yt-dlp updated.");
-    } catch (e) {
-      console.warn("[setup] yt-dlp update failed (continuing):", e.message);
-    }
-  }
+  // No auto-update on boot. Auto-updates defeat the whole point of pinning —
+  // a compromised future release would replace the verified binary silently.
+  // To update: bump YT_DLP_VERSION + YT_DLP_SHA256 above and redeploy.
 
   server.listen(PORT, () => {
     console.log(`vaux server running on http://localhost:${PORT}`);
   });
 }
 
-initializeServer().catch(console.error);
+initializeServer().catch((err) => {
+  console.error("[setup] fatal:", err.message || err);
+  process.exit(1);
+});
