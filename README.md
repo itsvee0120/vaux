@@ -326,6 +326,8 @@ Okay, not entirely.
 
 This project was created because I wanted to learn how to use Socket.IO across a CLI application and a web app. It started as a fun hobby project and a learning exercise, and I decided to publish it so others can play around with it, learn from it, or build their own ideas based on what I've made.
 
+> **Disclaimer:** This is a personal hobby project created for learning and experimentation. It is free, open source, non-commercial, and released under the MIT License. No donations, sponsorships, subscriptions, or other forms of compensation are requested or expected. If you find it useful, that's more than enough.
+
 ---
 
 ## Author
