@@ -195,11 +195,22 @@ export function LobbyPage({
     isHost && members.filter((m) => m.role !== "host").length > 0 ? (
       <div className="border-b border-vaux-green-dark p-3">
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex w-full cursor-pointer items-center gap-2 text-xs uppercase tracking-widest text-vaux-green hover:text-vaux-light">
-            <Users size={12} />
-            listeners ({members.filter((m) => m.role !== "host").length})
-            <ChevronDownIcon className="ml-auto" />
-          </DropdownMenuTrigger>
+          {/* Nested `asChild` lets a single <button> serve as both the
+              tooltip's anchor and the dropdown's trigger — Radix merges the
+              event listeners and ref so hover shows the tooltip and click
+              opens the menu. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DropdownMenuTrigger className="flex w-full cursor-pointer items-center gap-2 text-xs uppercase tracking-widest text-vaux-green hover:text-vaux-light">
+                <Users size={12} />
+                listeners ({members.filter((m) => m.role !== "host").length})
+                <ChevronDownIcon className="ml-auto" />
+              </DropdownMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Open listener list — tap "make host" to transfer host
+            </TooltipContent>
+          </Tooltip>
           <DropdownMenuContent
             className="flex min-w-48 flex-col gap-1 border border-vaux-green-dark bg-zinc-900 p-2"
             align="start"
@@ -212,12 +223,20 @@ export function LobbyPage({
                   className="flex items-center justify-between px-1 py-1"
                 >
                   <span className="text-xs text-vaux-light">{m.username}</span>
-                  <button
-                    onClick={() => onTransferHost(m.userId)}
-                    className="cursor-pointer text-xs text-vaux-green-dark transition-colors hover:text-vaux-green"
-                  >
-                    make host
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => onTransferHost(m.userId)}
+                        className="cursor-pointer text-xs text-vaux-green-dark transition-colors hover:text-vaux-green"
+                      >
+                        make host
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      Pass host control to {m.username} — they can play, pause,
+                      skip, and remove tracks
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               ))}
           </DropdownMenuContent>
@@ -351,8 +370,7 @@ export function LobbyPage({
             {!isHost && playback.isPlaying && (
               <p className="mt-2 text-xs text-zinc-600">
                 synced · {formatTime(syncedPosition)}
-                {playback.duration > 0 &&
-                  ` / ${formatTime(playback.duration)}`}
+                {playback.duration > 0 && ` / ${formatTime(playback.duration)}`}
               </p>
             )}
           </div>
@@ -439,9 +457,7 @@ export function LobbyPage({
           queue
         </p>
         {queue.length === 0 ? (
-          <p className="text-xs text-zinc-700">
-            empty — search and add tracks
-          </p>
+          <p className="text-xs text-zinc-700">empty — search and add tracks</p>
         ) : (
           <div className="flex flex-col gap-2">
             {queue.map((track) => (
@@ -543,10 +559,7 @@ export function LobbyPage({
       </p>
       <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
         {messages.map((m, i) => (
-          <div
-            key={i}
-            className="text-xs break-words [overflow-wrap:anywhere]"
-          >
+          <div key={i} className="text-xs break-words [overflow-wrap:anywhere]">
             {m.system ? (
               <span className="italic text-zinc-600">{m.text}</span>
             ) : (
