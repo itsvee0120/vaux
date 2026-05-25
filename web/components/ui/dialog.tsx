@@ -58,14 +58,19 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           // Sized to fit small phones (95vw) and cap on desktop (max-w-lg).
-          // max-h-[85dvh] + overflow-y-auto keeps long content scrollable
-          // instead of clipped, important on short mobile viewports.
-          "fixed left-1/2 top-1/2 z-50 grid w-[95vw] max-w-md -translate-x-1/2 -translate-y-1/2 gap-3 rounded-2xl border border-vaux-green-dark bg-vaux-bg-dark p-5 text-vaux-light shadow-xl shadow-black/40 ring-1 ring-vaux-green-dark/40 max-h-[85dvh] overflow-y-auto font-mono data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 sm:max-w-lg",
+          // Outer clips at the rounded border (overflow-hidden); inner wrapper
+          // handles the scroll. The outer padding (p-5/lg:p-7) keeps the
+          // scrollbar inset from the rounded-2xl (16px) corners on all sides,
+          // so it can never bleed through the border-radius. grid-rows-1
+          // (minmax(0,1fr)) lets the inner row honor max-h and trigger scroll.
+          "fixed left-1/2 top-1/2 z-50 grid w-[95vw] max-w-md -translate-x-1/2 -translate-y-1/2 grid-rows-[minmax(0,1fr)] gap-3 rounded-2xl border border-vaux-green-dark bg-vaux-bg-dark p-5 text-vaux-light shadow-xl shadow-black/40 ring-1 ring-vaux-green-dark/40 max-h-[85dvh] overflow-hidden font-mono data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 sm:max-w-lg",
           className,
         )}
         {...props}
       >
-        {children}
+        <div className="grid gap-[inherit] overflow-y-auto [scrollbar-color:var(--color-vaux-green-dark)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-vaux-green-dark/60 [&::-webkit-scrollbar-track]:bg-transparent">
+          {children}
+        </div>
         <DialogPrimitive.Close
           className="absolute right-3 top-3 cursor-pointer rounded-sm text-vaux-green-dark transition-colors hover:text-vaux-green focus:outline-none focus:ring-1 focus:ring-vaux-green-dark"
           aria-label="Close"
