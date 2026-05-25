@@ -16,6 +16,7 @@ import {
 import {
   CirclePlus,
   Play,
+  Trash2,
   SendHorizontal,
   Loader2,
   Users,
@@ -44,6 +45,7 @@ type LobbyPageProps = {
   onAddToQueue: (result: SearchResult) => void;
   onVote: (itemId: string, value: 1 | -1) => void;
   onPlayTrack: (track: Track) => void;
+  onRemoveFromQueue: (itemId: string) => void;
   onSendChat: () => void;
   onPlay: (positionSeconds: number) => void;
   onPause: (positionSeconds: number) => void;
@@ -72,6 +74,7 @@ export function LobbyPage({
   onAddToQueue,
   onVote,
   onPlayTrack,
+  onRemoveFromQueue,
   onSendChat,
   onPlay,
   onPause,
@@ -377,13 +380,22 @@ export function LobbyPage({
                       </button>
                     </div>
                     {isHost && (
-                      <button
-                        onClick={() => onPlayTrack(track)}
-                        className="ml-1 cursor-pointer text-xs font-bold text-vaux-green-dark transition-transform hover:scale-115 hover:text-[#A2CB8B]"
-                        title="Play now (host)"
-                      >
-                        <Play size={16} />
-                      </button>
+                      <div className="ml-2 flex shrink-0 items-center gap-4">
+                        <button
+                          onClick={() => onRemoveFromQueue(track.id)}
+                          className="cursor-pointer text-xs text-zinc-500 transition-colors hover:text-[#C44545]"
+                          title="Remove from queue (host)"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => onPlayTrack(track)}
+                          className="cursor-pointer text-xs font-bold text-vaux-green-dark transition-transform hover:scale-115 hover:text-[#A2CB8B]"
+                          title="Play now (host)"
+                        >
+                          <Play size={16} />
+                        </button>
+                      </div>
                     )}
                   </div>
                 ))}

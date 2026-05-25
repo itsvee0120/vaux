@@ -6,6 +6,7 @@ Usage:
     vaux join <room-id> <username>
 """
 
+import logging
 import os
 import shutil
 import sys
@@ -57,10 +58,11 @@ def ensure_ytdlp():
 @click.option("--server", default=SERVER_URL, show_default=True, help="Vaux server URL.")
 @click.option("--debug", is_flag=True, help="Enable debug output.")
 @click.option("-u", "--username", help="Your display name (used for quick join).")
-@click.option("--version", is_flag=True, is_eager=True, help="Show version and exit.")
+@click.option("--version", "show_version", is_flag=True, is_eager=True, help="Show version and exit.")
+@click.option("--path", "show_path", is_flag=True, is_eager=True, help="Show vaux installation path and exit.")
 @click.argument("room_id", required=False)
 @click.pass_context
-def cli(ctx, server, debug, username, version, room_id):
+def cli(ctx, server, debug, username, show_version, show_path, room_id):
     """
     Vaux — synchronized listening rooms in the terminal.
 
@@ -76,21 +78,24 @@ def cli(ctx, server, debug, username, version, room_id):
           Explicit join mode
     """
 
-    ensure_mpv()
-    ensure_ytdlp()
-
-    # ------------------------
-    # version
-    # ------------------------
-    if version:
+    if show_version:
         click.echo(f"vaux {__version__}")
         return
 
-    # ------------------------
-    # subcommand mode
-    # ------------------------
+    if show_path:
+        import vaux
+
+        click.echo(os.path.dirname(vaux.__file__))
+        return
+
+    if debug:
+        logging.basicConfig(level=logging.DEBUG)
+
     if ctx.invoked_subcommand is not None:
         return
+
+    ensure_mpv()
+    ensure_ytdlp()
 
     # ------------------------
     # quick join
@@ -106,6 +111,9 @@ def cli(ctx, server, debug, username, version, room_id):
     # ------------------------
     # lobby fallback
     # ------------------------
+    if room_id and not username:
+        click.echo("Pass -u <name> to quick-join this room directly.")
+
     lobby = LobbyApp(server_url=server)
     lobby.run()
 

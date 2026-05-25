@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LoginBackground } from "@/components/LoginBackground";
 import { generateRoomSlug } from "@/lib/room-slug";
 
@@ -9,7 +9,7 @@ type LoginPageProps = {
   username: string;
   onRoomIdChange: (value: string) => void;
   onUsernameChange: (value: string) => void;
-  onJoin: () => void;
+  onJoin: (roomIdOverride?: string) => void;
 };
 
 export function LoginPage({
@@ -19,21 +19,13 @@ export function LoginPage({
   onUsernameChange,
   onJoin,
 }: LoginPageProps) {
-  // Track which tab the user is on — "create" generates a slug, "join" is free-type
   const [mode, setMode] = useState<"create" | "join">("create");
 
-  // Slug is generated client-side only to avoid SSR hydration mismatches.
-  const [generatedSlug, setGeneratedSlug] = useState("");
-
-  useEffect(() => {
-    if (mode !== "create" || generatedSlug) return;
-    const slug = roomId.trim() || generateRoomSlug();
-    setGeneratedSlug(slug);
-    if (!roomId.trim()) onRoomIdChange(slug);
-  }, [mode, roomId, generatedSlug, onRoomIdChange]);
+  const [generatedSlug, setGeneratedSlug] = useState(
+    () => roomId.trim() || generateRoomSlug(),
+  );
 
   function handleCreate() {
-    // Generate a fresh slug, sync it both locally and up to the parent
     const slug = generateRoomSlug();
     setGeneratedSlug(slug);
     onRoomIdChange(slug);
@@ -41,13 +33,11 @@ export function LoginPage({
   }
 
   function handleSwitchToJoin() {
-    // Clear the parent's roomId so the join input starts empty
     onRoomIdChange("");
     setMode("join");
   }
 
   function handleSwitchToCreate() {
-    // Re-generate when switching back so they always get a fresh one
     const slug = generateRoomSlug();
     setGeneratedSlug(slug);
     onRoomIdChange(slug);
@@ -69,7 +59,6 @@ export function LoginPage({
             </p>
           </header>
 
-          {/* ── mode toggle ── */}
           <div className="flex rounded-2xl border border-zinc-700 p-1 gap-1">
             <button
               type="button"
@@ -99,11 +88,15 @@ export function LoginPage({
             className="flex flex-col gap-3 sm:gap-4"
             onSubmit={(e) => {
               e.preventDefault();
-              onJoin();
+              const effectiveRoomId =
+                mode === "create" ? roomId.trim() || generatedSlug : roomId.trim();
+              if (mode === "create" && effectiveRoomId !== roomId) {
+                onRoomIdChange(effectiveRoomId);
+              }
+              onJoin(effectiveRoomId);
             }}
           >
             {mode === "create" ? (
-              // ── create mode: show generated slug with a re-roll button ──
               <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3">
                 <span className="flex-1 truncate text-base text-vaux-green sm:text-sm">
                   {generatedSlug || "…"}
@@ -118,7 +111,6 @@ export function LoginPage({
                 </button>
               </div>
             ) : (
-              // ── join mode: free-type the room name a host shared ──
               <input
                 className="w-full rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3 text-base focus:border-vaux-green focus:outline-none sm:text-sm"
                 placeholder="room name (e.g. velvet-orbit-42)"
@@ -145,7 +137,6 @@ export function LoginPage({
             </button>
           </form>
 
-          {/* ── hint so joiners know what to ask the host for ── */}
           {mode === "join" && (
             <p className="text-center text-xs text-zinc-600">
               ask the host for their room name

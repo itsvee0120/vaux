@@ -1,17 +1,23 @@
 # Vaux CLI
 
-A terminal client for vaux listening rooms. Listen to YouTube audio in perfectly synchronized harmony with your friends directly from your terminal.
+A terminal client for [Vaux](https://github.com/itsvee0120/vaux) listening rooms. Listen to YouTube audio in sync with friends directly from your terminal.
 
 Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 
 ## Features
 
-- **Synchronized Playback:** Everyone in the room hears the exact same timestamp.
-- **Shared Queue:** Search YouTube directly from the terminal and add tracks.
-- **Live Voting:** Vote tracks up (`ctrl+u`) or down (`ctrl+d`) to re-sort the queue.
-- **Live Chat:** Talk with friends right next to the music.
-- **Host Controls:** Pause, play, skip, and manage the room.
-- **Zero-Quota:** No YouTube API keys required. Audio streams are dynamically extracted by the Vaux server.
+- **Synchronized playback** — everyone hears the same timestamp
+- **Shared queue** — search YouTube and add tracks from the terminal
+- **Live voting** — vote tracks up or down to re-sort the queue
+- **Live chat** — talk with friends alongside the music
+- **Host controls** — play, pause, skip, remove tracks, transfer host
+- **No YouTube API key** — search and stream URLs come from the Vaux server (with local yt-dlp fallback)
+
+## Requirements
+
+- **mpv** — plays audio. On Windows, the CLI can download a portable build on first run. On Linux/macOS, install via your package manager (`apt install mpv`, `brew install mpv`, etc.).
+- **Node.js** (recommended) — modern yt-dlp needs a JS runtime for YouTube extraction. Node is auto-detected when using the local yt-dlp fallback. The hosted server already runs Node.
+- **yt-dlp** — included as a package dependency; keep it updated with `pip install -U yt-dlp`.
 
 ## Installation
 
@@ -19,7 +25,11 @@ Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 pipx install vaux-cli
 ```
 
-_Note: The CLI requires `mpv` to play audio. If you are on Windows, the app will automatically offer to download a portable version of `mpv` for you on first run! Linux/macOS users should install `mpv` via their package manager (e.g., `apt install mpv` or `brew install mpv`)._
+Or:
+
+```bash
+pip install vaux-cli
+```
 
 ## Usage
 
@@ -29,75 +39,70 @@ Launch the interactive lobby:
 vaux
 ```
 
-Or bypass the lobby to join a room directly:
+Join a room directly:
 
 ```bash
 vaux <room-id> -u <your-name>
 ```
 
-## Keyboard Shortcuts
+Point at a local server when developing:
 
-| Key       | Action                   |
-| --------- | ------------------------ |
-| `Ctrl+S`  | Focus Search             |
-| `Ctrl+T`  | Focus Chat               |
-| `Ctrl+O`  | Play / Pause (Host only) |
-| `Ctrl+N`  | Skip Track (Host only)   |
-| `Ctrl+U`  | Vote Up selected track   |
-| `Ctrl+D`  | Vote Down selected track |
-| `-` / `=` | Volume Down / Up         |
-| `Ctrl+C`  | Quit                     |
+```bash
+vaux --server http://localhost:4000
+vaux --server http://localhost:4000 my-room -u yourname
+```
 
----
+## Keyboard shortcuts
 
-### Host
+| Key        | Action                              |
+| ---------- | ----------------------------------- |
+| `Ctrl+S`   | Focus search                        |
+| `Ctrl+T`   | Focus chat                          |
+| `Ctrl+O`   | Play / pause (host)                 |
+| `Ctrl+N`   | Skip track (host)                   |
+| `x` / `Del`| Remove queue item (host, queue focused) |
+| `Ctrl+U`   | Vote up selected track              |
+| `Ctrl+D`   | Vote down selected track            |
+| `Ctrl+G`   | Info (version, links, shortcuts)    |
+| `Ctrl+L`   | Listeners & transfer host (host)    |
+| `-` / `=`  | Volume down / up                    |
+| `Ctrl+C`   | Quit                                |
 
-The room host can:
+## Host transfer
 
-- Play tracks
-- Pause playback
-- Resume playback
-- Skip tracks
-- Transfer host privileges
-- Control room playback state
-
-### Listener
-
-Listeners can:
-
-- Search tracks
-- Add songs to the queue
-- Vote on songs
-- Participate in chat
-
-## Host Transfer
-
-Hosts can transfer control to another user directly from chat:
+Transfer host from chat:
 
 ```
 /host username
 ```
 
-Example:
+## Streaming notes
 
+Audio is resolved via the server first, then local yt-dlp fallback. Override `VAUX_API_KEY` only if the server uses a custom `API_KEY`. If playback fails, update yt-dlp and keep Node.js on PATH:
+
+```powershell
+pip install -U yt-dlp
+yt-dlp --js-runtimes node --remote-components ejs:github "https://youtu.be/VIDEO_ID"
 ```
-/host john
+
+If that command works locally, the CLI fallback should work too.
+
+## Development
+
+```bash
+cd cli
+python -m venv .venv
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # macOS/Linux
+pip install -e .
+python main.py --server http://localhost:4000
 ```
 
----
+## Links
 
-## Project Links
-
-Repository: [https://github.com/itsvee0120/vaux](https://github.com/itsvee0120/vaux)
-Issues: [https://github.com/itsvee0120/vaux/issues](https://github.com/itsvee0120/vaux/issues)
-
----
-
-## Contact
-
-[https://itsvee0120.github.io/violet-website/](https://itsvee0120.github.io/violet-website/)
-
----
+- Repository: [github.com/itsvee0120/vaux](https://github.com/itsvee0120/vaux)
+- PyPI: [pypi.org/project/vaux-cli](https://pypi.org/project/vaux-cli/)
+- Issues: [github.com/itsvee0120/vaux/issues](https://github.com/itsvee0120/vaux/issues)
 
 ## Author
 
@@ -105,6 +110,4 @@ Issues: [https://github.com/itsvee0120/vaux/issues](https://github.com/itsvee012
 
 ## License
 
-This project is licensed under the [MIT License](../LICENSE).
-
-Copyright (c) 2026 Violet Nguyen
+MIT — see [LICENSE](../LICENSE).

@@ -15,11 +15,10 @@ license = { text = "MIT" }
 dependencies = [
     "click",
     "textual",
-    "python-socketio",
+    "python-socketio[asyncio_client]",
     "httpx",
-    "aiohttp",
-    "websockets",
-    "yt-dlp",
+    "yt-dlp>=2026.3.17",
+    "pyperclip",
 ]
 
 [project.urls]

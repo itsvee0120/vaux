@@ -24,7 +24,7 @@ A real-time music listening room - join a room, build a queue together, vote on 
 
 One backend, two clients. The real-time sync logic is written once and consumed by both the web app and the CLI over the same Socket.io event contract.
 
-**Zero-Quota Streaming:** The Node.js server centrally runs `yt-dlp` to dynamically scrape YouTube search results and extract direct audio stream URLs. This completely eliminates the need for YouTube API keys, Google daily quotas, client-side browser cookies, and local `yt-dlp` binaries!
+**Zero-Quota Streaming:** The Node.js server runs `yt-dlp` with Node as a JS runtime to search YouTube and extract direct audio stream URLs — no YouTube API keys or Google quotas. The web client uses the YouTube IFrame player; the CLI uses `mpv` with stream URLs from the server (local yt-dlp fallback when needed).
 
 ```
 vaux/
@@ -66,6 +66,7 @@ vaux/
 | `room:member_joined`   | Server → Client | `{ userId, username, role }`                                   |
 | `room:member_left`     | Server → Client | `{ userId }`                                                   |
 | `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }`    |
+| `queue:remove`         | Client → Server | `{ roomId, itemId }` — host only                               |
 | `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                    |
 | `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`                 |
 | `playback:play_track`  | Client → Server | `{ roomId, itemId }` — host only; starts queue item            |
@@ -98,16 +99,14 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 | CLI frontend | Python 3.12, textual, python-socketio                                         |
 | Backend      | Node.js, Express, Socket.io                                                   |
 | Database     | In-memory (Currently)                                                         |
-| Music source | `yt-dlp` (backend extraction & search), YouTube IFrame API (web), `mpv` (CLI) |
+| Music source | `yt-dlp` + Node.js (server search & stream extraction), YouTube IFrame API (web), `mpv` (CLI) |
 | Hosting      | Vercel (web), Render (server)                                                 |
 
 ---
 
 ## Installation (CLI)
 
-We highly recommend using [`pipx`](https://pipx.pypa.io/) to install the terminal client globally so it is always available on your drive and not hidden inside a temporary Anaconda environment:
-
-Latest Version on Pypi: https://pypi.org/project/vaux-cli/
+Install from PyPI: [pypi.org/project/vaux-cli](https://pypi.org/project/vaux-cli/)
 
 ```bash
 pipx install vaux-cli
@@ -119,9 +118,9 @@ or
 pip install vaux-cli
 ```
 
-_Note: The CLI requires `mpv` to play audio. If you are on Windows, the app will automatically offer to download a portable version of `mpv` for you on first run! Linux/macOS users should install `mpv` via their package manager (e.g., `apt install mpv` or `brew install mpv`)._
+**Requirements:** `mpv` for audio playback (auto-downloaded on Windows). For local yt-dlp fallback, keep yt-dlp updated and have Node.js on your PATH.
 
-Once installed, you can launch it from anywhere:
+Once installed, launch from anywhere:
 
 ## Usage
 
@@ -139,16 +138,19 @@ vaux <room-id> -u <your-name>
 
 ## Keyboard Shortcuts
 
-| Key       | Action                   |
-| --------- | ------------------------ |
-| `Ctrl+S`  | Focus Search             |
-| `Ctrl+T`  | Focus Chat               |
-| `Ctrl+O`  | Play / Pause (Host only) |
-| `Ctrl+N`  | Skip Track (Host only)   |
-| `Ctrl+U`  | Vote Up selected track   |
-| `Ctrl+D`  | Vote Down selected track |
-| `-` / `=` | Volume Down / Up         |
-| `Ctrl+C`  | Quit                     |
+| Key         | Action                              |
+| ----------- | ----------------------------------- |
+| `Ctrl+S`    | Focus Search                        |
+| `Ctrl+T`    | Focus Chat                          |
+| `Ctrl+O`    | Play / Pause (Host only)            |
+| `Ctrl+N`    | Skip Track (Host only)              |
+| `x` / `Del` | Remove queue item (Host, queue focused) |
+| `Ctrl+U`    | Vote Up selected track              |
+| `Ctrl+D`    | Vote Down selected track            |
+| `Ctrl+G`    | Info                                |
+| `Ctrl+L`    | Listeners & transfer host (Host)    |
+| `-` / `=`   | Volume Down / Up                    |
+| `Ctrl+C`    | Quit                                |
 
 ---
 
@@ -190,7 +192,7 @@ Example:
 
 ### Prerequisites
 
-- Node.js v18+
+- Node.js v18+ (required for yt-dlp YouTube extraction on the server)
 - Python 3.11+
 
 ### 1. Clone the repo
@@ -205,7 +207,7 @@ cd vaux
 ```bash
 cd server
 npm install
-cp .env.example .env   # fill in your values
+cp .env.example .env   # optional — defaults work out of the box
 npm run dev
 # running on http://localhost:4000
 ```
@@ -215,7 +217,7 @@ npm run dev
 ```bash
 cd web
 npm install
-cp .env.example .env.local   # fill in your values
+cp .env.local.example .env.local   # optional
 npm run dev
 # running on http://localhost:3000
 ```
@@ -229,7 +231,7 @@ cd cli
 python -m venv .venv
 .venv\Scripts\activate    # Windows
 source .venv/bin/activate # macOS/Linux
-pip install -r requirements.txt
+pip install -e .
 
 # Open the interactive lobby (local server):
 python main.py --server http://localhost:4000
@@ -249,21 +251,30 @@ vaux --server http://localhost:4000 my-room -u yourname
 
 ## Environment variables
 
+All clients share a built-in **public dev gate** key for `/youtube` routes (`vaux-02187xdsx-4335`). It is not a secret — it only filters casual bot traffic. Override it in production if desired.
+
 ### server/.env
 
 ```
 PORT=4000
+# API_KEY=vaux-02187xdsx-4335   # optional override
 ```
 
 ### web/.env.local
 
 ```
 NEXT_PUBLIC_SERVER_URL=http://localhost:4000
+# NEXT_PUBLIC_API_KEY=...         # optional override
 ```
 
-### CLI (local development)
+### CLI
 
-Pass `--server` so the CLI uses the same backend as the web app:
+```
+# VAUX_API_KEY=...                # optional override
+--server http://localhost:4000
+```
+
+Pass `--server` when running against a local backend:
 
 ```
 --server http://localhost:4000
@@ -299,7 +310,7 @@ Omit `--server` only when you intend to use the public hosted server.
 - [ ] Public room discovery
 - [ ] AI playlist seeding
 - [ ] Persistent PostgreSQL storage
-- [ ] Installable CLI via `pip install vaux-cli`
+- [x] Installable CLI via `pip install vaux-cli`
 
 ---
 
