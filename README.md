@@ -14,11 +14,6 @@ A real-time music listening room - join a room, build a queue together, vote on 
 https://github.com/user-attachments/assets/ae3808a2-98e7-4c24-af91-6adc98b5a966
 
 
-
-### 🌐 Live Demo: https://vaux-ten.vercel.app/
-
-### 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/
-
 ---
 
 ## What it does
