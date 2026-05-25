@@ -39,6 +39,12 @@ Or:
 pip install vaux-cli
 ```
 
+Upgrade to latest release
+
+```bash
+pip install --upgrade vaux-cli
+```
+
 ## Usage
 
 Launch the interactive lobby:
@@ -62,21 +68,21 @@ vaux --server http://localhost:4000 my-room -u yourname
 
 ## Keyboard shortcuts
 
-| Key        | Action                              |
-| ---------- | ----------------------------------- |
-| `Ctrl+S`   | Focus search                        |
-| `Ctrl+T`   | Focus chat                          |
-| `Ctrl+O`   | Play / pause (host)                 |
-| `Ctrl+N`   | Skip track (host)                   |
-| `x` / `Del`| Remove queue item (host, queue focused) |
-| `Ctrl+U`   | Vote up selected track              |
-| `Ctrl+D`   | Vote down selected track            |
-| `Ctrl+G`   | Info (version, links, shortcuts)    |
-| `Ctrl+L`   | Listeners & transfer host (host)    |
-| `Ctrl+B`   | Report a bug (Google Form / GitHub) |
-| `Ctrl+P`   | Command palette (save screenshot, etc.) |
-| `-` / `=`  | Volume down / up                    |
-| `Ctrl+C`   | Quit                                |
+| Key         | Action                                  |
+| ----------- | --------------------------------------- |
+| `Ctrl+S`    | Focus search                            |
+| `Ctrl+T`    | Focus chat                              |
+| `Ctrl+O`    | Play / pause (host)                     |
+| `Ctrl+N`    | Skip track (host)                       |
+| `x` / `Del` | Remove queue item (host, queue focused) |
+| `Ctrl+U`    | Vote up selected track                  |
+| `Ctrl+D`    | Vote down selected track                |
+| `Ctrl+G`    | Info (version, links, shortcuts)        |
+| `Ctrl+L`    | Listeners & transfer host (host)        |
+| `Ctrl+B`    | Report a bug (Google Form / GitHub)     |
+| `Ctrl+P`    | Command palette (save screenshot, etc.) |
+| `-` / `=`   | Volume down / up                        |
+| `Ctrl+C`    | Quit                                    |
 
 ## Host transfer
 
@@ -130,6 +136,20 @@ python main.py --server http://localhost:4000
 - Repository: [github.com/itsvee0120/vaux](https://github.com/itsvee0120/vaux)
 - PyPI: [pypi.org/project/vaux-cli](https://pypi.org/project/vaux-cli/)
 - Issues: [github.com/itsvee0120/vaux/issues](https://github.com/itsvee0120/vaux/issues)
+
+---
+
+## Why this project
+
+I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
+
+Okay, not entirely.
+
+This project was created because I wanted to learn how to use Socket.IO across a CLI application and a web app. It started as a fun hobby project and a learning exercise, and I decided to publish it so others can play around with it, learn from it, or build their own ideas based on what I've made.
+
+> **Disclaimer:** This is a personal hobby project created for learning and experimentation. It is free, open source, non-commercial, and released under the MIT License. No donations, sponsorships, subscriptions, or other forms of compensation are requested or expected. If you find it useful, that's more than enough.
+
+---
 
 ## Author
 
