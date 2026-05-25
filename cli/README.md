@@ -131,6 +131,20 @@ python main.py --server http://localhost:4000
 - PyPI: [pypi.org/project/vaux-cli](https://pypi.org/project/vaux-cli/)
 - Issues: [github.com/itsvee0120/vaux/issues](https://github.com/itsvee0120/vaux/issues)
 
+---
+
+## Why this project
+
+I'm too lazy to switch tabs and need my full screen while coding ... That's it, that's why. 😺
+
+Okay, not entirely.
+
+This project was created because I wanted to learn how to use Socket.IO across a CLI application and a web app. It started as a fun hobby project and a learning exercise, and I decided to publish it so others can play around with it, learn from it, or build their own ideas based on what I've made.
+
+> **Disclaimer:** This is a personal hobby project created for learning and experimentation. It is free, open source, non-commercial, and released under the MIT License. No donations, sponsorships, subscriptions, or other forms of compensation are requested or expected. If you find it useful, that's more than enough.
+
+---
+
 ## Author
 
 **Violet Nguyen** — [nviolet0120@gmail.com](mailto:nviolet0120@gmail.com)
