@@ -176,6 +176,17 @@ export default function Home() {
       },
     );
 
+    socket.on("chat:rate_limited", () => {
+      setMessages((p) => [
+        ...p,
+        {
+          username: "",
+          text: "slow down — too many messages",
+          system: true,
+        },
+      ]);
+    });
+
     return () => {
       socket.off("room:joined");
       socket.off("room:member_joined");
@@ -184,6 +195,7 @@ export default function Home() {
       socket.off("queue:updated");
       socket.off("playback:state");
       socket.off("chat:message");
+      socket.off("chat:rate_limited");
     };
   }, []);
 
