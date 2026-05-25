@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PlaybackState } from "@/lib/playback";
 import { getSyncedPosition } from "@/lib/playback";
 import { decodeHTML } from "@/lib/decode-html";
@@ -113,8 +113,25 @@ export function LobbyPage({
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekUi, setSeekUi] = useState(0);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  // Force a re-render twice a second while playing so getSyncedPosition picks
+  // up the new wall-clock time and the slider/now-playing labels advance
+  // between server broadcasts. Paused or while-the-user-is-dragging: no tick,
+  // so the slider sits still and doesn't fight the drag gesture.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!playback.isPlaying || isSeeking) return;
+    const id = setInterval(() => tick((n) => n + 1), 500);
+    return () => clearInterval(id);
+  }, [playback.isPlaying, isSeeking]);
   const syncedPosition = getSyncedPosition(playback);
   const seekValue = isSeeking ? seekUi : syncedPosition;
+  // Range inputs have no built-in "filled" track on WebKit, so we paint one
+  // with a hard-stop linear-gradient driven by --vaux-progress. The CSS var
+  // is set inline per render; the gradient is declared once in the class
+  // list. The static bg-vaux-light/20 background-color sits behind the
+  // gradient and shows through past the stop, acting as the unfilled track.
+  const seekMax = playback.duration > 0 ? playback.duration : 600;
+  const seekPct = Math.min(100, Math.max(0, (seekValue / seekMax) * 100));
 
   function handleCopyRoom() {
     navigator.clipboard.writeText(roomId);
@@ -230,11 +247,17 @@ export function LobbyPage({
                         <input
                           type="range"
                           min={0}
-                          max={playback.duration || 600}
+                          max={seekMax}
                           step={0.5}
                           value={seekValue}
+                          style={
+                            {
+                              "--vaux-progress": `${seekPct}%`,
+                            } as React.CSSProperties
+                          }
                           className="flex-1 rounded-full h-1 appearance-none transition-all outline-none cursor-pointer focus:outline-none
                           [&::-webkit-slider-runnable-track]:bg-vaux-light/20
+                          [&::-webkit-slider-runnable-track]:[background-image:linear-gradient(to_right,var(--color-vaux-green)_var(--vaux-progress),transparent_var(--vaux-progress))]
                           [&::-webkit-slider-runnable-track]:rounded-full
                           [&::-webkit-slider-runnable-track]:cursor-pointer
                           [&::-webkit-slider-runnable-track]:transition-all
@@ -252,6 +275,12 @@ export function LobbyPage({
                           [&::-webkit-slider-thumb]:border-vaux-green-dark 
                           [&::-webkit-slider-thumb]:hover:scale-110
                           [&::-webkit-slider-thumb]:active:scale-100
+                          [&::-moz-range-track]:h-1
+                          [&::-moz-range-track]:rounded-full
+                          [&::-moz-range-track]:bg-vaux-light/20
+                          [&::-moz-range-progress]:h-1
+                          [&::-moz-range-progress]:rounded-full
+                          [&::-moz-range-progress]:bg-vaux-green
                           [&::-moz-range-thumb]:appearance-none
                           [&::-moz-range-thumb]:w-5
                           [&::-moz-range-thumb]:h-5
