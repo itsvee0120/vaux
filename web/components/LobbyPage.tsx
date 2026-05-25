@@ -248,7 +248,8 @@ export function LobbyPage({
                   {!isHost && playback.isPlaying && (
                     <p className="mt-2 text-xs text-zinc-600">
                       synced · {formatTime(syncedPosition)}
-                      {playback.duration > 0 && ` / ${formatTime(playback.duration)}`}
+                      {playback.duration > 0 &&
+                        ` / ${formatTime(playback.duration)}`}
                     </p>
                   )}
                 </div>
@@ -289,7 +290,7 @@ export function LobbyPage({
               </button>
             </div>
 
-            {searchResults.length > 0 && (
+            {searchResults.length > 0 ? (
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 {searchResults.map((r) => (
                   <div
@@ -318,6 +319,10 @@ export function LobbyPage({
                   </div>
                 ))}
               </div>
+            ) : (
+              <p className="text-m uppercase text-center tracking-widest text-zinc-700">
+                results will appear here
+              </p>
             )}
           </div>
         </div>
@@ -446,7 +451,10 @@ export function LobbyPage({
             </p>
             <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
               {messages.map((m, i) => (
-                <div key={i} className="text-xs break-words [overflow-wrap:anywhere]">
+                <div
+                  key={i}
+                  className="text-xs break-words [overflow-wrap:anywhere]"
+                >
                   {m.system ? (
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (
