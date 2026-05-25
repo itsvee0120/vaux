@@ -173,29 +173,72 @@ function emptyPlaybackState() {
   };
 }
 
+// Memory bounds. In-memory state grows with rooms/members/queues — without
+// caps a single attacker can OOM the server by spamming joins or queue adds.
+const MAX_ROOMS = 200;
+const MAX_MEMBERS_PER_ROOM = 50;
+const MAX_QUEUE_LENGTH = 100;
+const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // delete rooms with 0 members after 10 min
+
+// Read-only lookup. All handlers except room:join use this — phantom rooms
+// can no longer be conjured by sending queue:add / host:transfer / playback:*
+// with arbitrary room ids.
 function getRoom(roomId) {
-  if (!rooms[roomId]) {
-    rooms[roomId] = {
-      id: roomId,
-      members: [],
-      queue: [],
-      playbackState: emptyPlaybackState(),
-    };
-  }
   return rooms[roomId];
 }
 
+// Creates a room if missing, enforcing the room-count cap. Only called from
+// room:join. Returns null if the server is at the room cap.
+function getOrCreateRoom(roomId) {
+  if (rooms[roomId]) {
+    // Reviving an empty room — cancel any pending cleanup.
+    if (rooms[roomId]._cleanupTimer) {
+      clearTimeout(rooms[roomId]._cleanupTimer);
+      rooms[roomId]._cleanupTimer = null;
+    }
+    return rooms[roomId];
+  }
+  if (Object.keys(rooms).length >= MAX_ROOMS) {
+    return null;
+  }
+  rooms[roomId] = {
+    id: roomId,
+    members: [],
+    queue: [],
+    playbackState: emptyPlaybackState(),
+    _cleanupTimer: null,
+  };
+  return rooms[roomId];
+}
+
+function scheduleRoomCleanup(roomId) {
+  const room = rooms[roomId];
+  if (!room || room.members.length > 0) return;
+  if (room._cleanupTimer) clearTimeout(room._cleanupTimer);
+  room._cleanupTimer = setTimeout(() => {
+    // Re-check at fire time — someone may have rejoined.
+    const r = rooms[roomId];
+    if (r && r.members.length === 0) {
+      delete rooms[roomId];
+      console.log(`[room] cleaned up empty room: ${roomId}`);
+    }
+  }, EMPTY_ROOM_TTL_MS);
+}
+
 function getMember(room, userId) {
+  if (!room) return undefined;
   return room.members.find((m) => m.userId === userId);
 }
 
 function isHost(socket, room) {
+  if (!room) return false;
   const member = getMember(room, socket.data?.userId);
   return member?.role === "host";
 }
 
 function broadcastPlaybackState(roomId) {
   const room = getRoom(roomId);
+  if (!room) return;
   io.to(roomId).emit("playback:state", room.playbackState);
 }
 
@@ -275,7 +318,24 @@ io.on("connection", (socket) => {
     if (!cleanName) return;
 
     const userId = socket.data.userId;
-    const room = getRoom(roomId);
+    const room = getOrCreateRoom(roomId);
+    if (!room) {
+      // Server at MAX_ROOMS — refuse to spin up another room. Existing rooms
+      // can still be joined.
+      socket.emit("room:join_failed", {
+        reason: "server at capacity, try again later",
+      });
+      return;
+    }
+
+    // Hard cap on members. Once full, only existing members can rejoin.
+    if (
+      !getMember(room, userId) &&
+      room.members.length >= MAX_MEMBERS_PER_ROOM
+    ) {
+      socket.emit("room:join_failed", { reason: "room full" });
+      return;
+    }
 
     socket.join(roomId);
     socket.data.roomId = roomId;
@@ -308,7 +368,7 @@ io.on("connection", (socket) => {
   // ── HOST TRANSFER ──
   socket.on("host:transfer", ({ roomId, newHostId }) => {
     const room = getRoom(roomId);
-
+    if (!room) return;
     if (!isHost(socket, room)) return;
 
     const currentHost = getMember(room, socket.data?.userId);
@@ -332,6 +392,14 @@ io.on("connection", (socket) => {
       if (!socket.data.username) return;
       if (!queueAddLimiter(socket, "queue:add")) return;
       const room = getRoom(roomId);
+      if (!room) return;
+
+      // Hard cap on queue length per room. Rate limiter already throttles
+      // burst additions; this catches sustained slow filling.
+      if (room.queue.length >= MAX_QUEUE_LENGTH) {
+        socket.emit("queue:full", { max: MAX_QUEUE_LENGTH });
+        return;
+      }
 
       const item = {
         id: Date.now().toString(),
@@ -353,6 +421,7 @@ io.on("connection", (socket) => {
   socket.on("queue:vote", ({ roomId, itemId, value }) => {
     if (!voteLimiter(socket, "queue:vote")) return;
     const room = getRoom(roomId);
+    if (!room) return;
 
     const item = room.queue.find((i) => i.id === itemId);
     if (!item) return;
@@ -367,6 +436,7 @@ io.on("connection", (socket) => {
 
   socket.on("queue:remove", ({ roomId, itemId }) => {
     const room = getRoom(roomId);
+    if (!room) return;
     if (!isHost(socket, room)) return;
 
     const idx = room.queue.findIndex((i) => i.id === itemId);
@@ -461,7 +531,10 @@ io.on("connection", (socket) => {
     const { roomId, userId } = socket.data || {};
     const room = rooms[roomId];
 
-    if (!room) return;
+    if (!room) {
+      console.log(`[socket] disconnected: ${socket.id}`);
+      return;
+    }
 
     const leaving = room.members.find((m) => m.userId === userId);
     const wasHost = leaving?.role === "host";
@@ -478,6 +551,12 @@ io.on("connection", (socket) => {
         newHostId: newHost.userId,
         newHostUsername: newHost.username,
       });
+    }
+
+    // Last member out — schedule TTL cleanup. Cancelled if anyone rejoins
+    // before the timer fires.
+    if (room.members.length === 0) {
+      scheduleRoomCleanup(roomId);
     }
 
     console.log(`[socket] disconnected: ${socket.id}`);

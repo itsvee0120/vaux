@@ -187,6 +187,29 @@ export default function Home() {
       ]);
     });
 
+    socket.on("queue:full", ({ max }: { max: number }) => {
+      setMessages((p) => [
+        ...p,
+        {
+          username: "",
+          text: `queue is full (max ${max} tracks)`,
+          system: true,
+        },
+      ]);
+    });
+
+    socket.on(
+      "room:join_failed",
+      ({ reason }: { reason: string }) => {
+        clearSession();
+        setRejoinFailed(true);
+        setScreen("lobby");
+        // Surface the reason once the user is back on the lobby. The lobby
+        // already shows a rejoin-failed banner; we can just log here.
+        console.warn(`[vaux] join failed: ${reason}`);
+      },
+    );
+
     return () => {
       socket.off("room:joined");
       socket.off("room:member_joined");
@@ -196,6 +219,8 @@ export default function Home() {
       socket.off("playback:state");
       socket.off("chat:message");
       socket.off("chat:rate_limited");
+      socket.off("queue:full");
+      socket.off("room:join_failed");
     };
   }, []);
 

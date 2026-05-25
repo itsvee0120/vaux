@@ -1026,6 +1026,8 @@ class VauxApp(App):
         self.socket.on("playback:state", self._on_playback_state)
         self.socket.on("chat:message", self._on_chat_message)
         self.socket.on("chat:rate_limited", self._on_chat_rate_limited)
+        self.socket.on("queue:full", self._on_queue_full)
+        self.socket.on("room:join_failed", self._on_room_join_failed)
         self.socket.on("reaction:broadcast", self._on_reaction)
 
     async def _on_room_joined(self, data: dict):
@@ -1107,6 +1109,18 @@ class VauxApp(App):
 
     async def _on_chat_rate_limited(self, data: dict):
         self._post_system("slow down — too many messages")
+
+    async def _on_queue_full(self, data: dict):
+        cap = data.get("max", "?")
+        self.notify(f"queue is full (max {cap} tracks)", severity="warning", timeout=4)
+
+    async def _on_room_join_failed(self, data: dict):
+        reason = data.get("reason", "join refused")
+        try:
+            self.screen.loading = False
+        except Exception:
+            pass
+        self.notify(f"could not join: {reason}", severity="error", timeout=6)
 
     async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")
