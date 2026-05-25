@@ -137,11 +137,34 @@ async def _get_stream_from_server(
         return None, f"server unreachable: {exc}"
 
 
+async def _drain_subprocess(proc: asyncio.subprocess.Process) -> None:
+    """Force-close an asyncio subprocess + its pipe transports.
+
+    On Windows ProactorEventLoop, if communicate() is cancelled (e.g. by
+    wait_for timing out), the stdout/stderr read tasks die mid-flight and the
+    _ProactorBasePipeTransport objects are left in a half-closed state. Their
+    __del__ later raises ResourceWarning, and the warning's __repr__ call
+    crashes with "I/O operation on closed pipe" — the noisy traceback the
+    user sees. Killing + re-communicating gives the transports a chance to
+    run their close() callbacks on the still-live loop.
+    """
+    if proc.returncode is None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        except Exception:
+            pass
+    try:
+        await proc.communicate()
+    except Exception:
+        pass
+
+
 async def _get_stream_local(video_id: str) -> tuple[str | None, str | None]:
     """Fallback: resolve stream URL with local yt-dlp."""
     ytdlp = _get_ytdlp_exe()
     watch_url = f"https://www.youtube.com/watch?v={video_id}"
-    last_error: str | None = None
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -155,20 +178,27 @@ async def _get_stream_local(video_id: str) -> tuple[str | None, str | None]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
-        if proc.returncode != 0:
-            err_text = stderr.decode("utf-8", errors="ignore")
-            return None, _parse_ytdlp_error(err_text)
-        url = stdout.decode("utf-8", errors="ignore").strip().splitlines()
-        if url and url[0].startswith("http"):
-            return url[0], None
-        last_error = "yt-dlp returned no stream URL"
-    except asyncio.TimeoutError:
-        last_error = "yt-dlp timed out"
+    except FileNotFoundError:
+        return None, f"yt-dlp not found at {ytdlp}"
     except Exception as exc:
-        last_error = str(exc)
+        return None, str(exc)
 
-    return None, last_error
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+    except asyncio.TimeoutError:
+        await _drain_subprocess(proc)
+        return None, "yt-dlp timed out"
+    except Exception as exc:
+        await _drain_subprocess(proc)
+        return None, str(exc)
+
+    if proc.returncode != 0:
+        err_text = stderr.decode("utf-8", errors="ignore")
+        return None, _parse_ytdlp_error(err_text)
+    url_lines = stdout.decode("utf-8", errors="ignore").strip().splitlines()
+    if url_lines and url_lines[0].startswith("http"):
+        return url_lines[0], None
+    return None, "yt-dlp returned no stream URL"
 
 
 async def get_stream_url(
