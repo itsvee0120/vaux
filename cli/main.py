@@ -128,5 +128,20 @@ def cli(ctx, server, debug, username, show_version, show_path, room_id):
         server_url=server,
     ).run()
 
+@cli.command()
+def bug():
+    """Report a bug — opens GitHub Issues in your browser (pre-filled)."""
+    import webbrowser
+    from vaux.app import build_github_issue_url
+
+    url = build_github_issue_url(in_room=False)
+    click.echo("Opening GitHub Issues in your browser...")
+    if not webbrowser.open(url):
+        click.echo("Could not launch a browser. Open this URL manually:")
+        click.echo(url)
+        return
+    click.echo("Tip: include a screenshot if it's a visual bug.")
+
+
 if __name__ == "__main__":
     cli()

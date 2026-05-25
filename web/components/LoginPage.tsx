@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { LoginBackground } from "@/components/LoginBackground";
 import { generateRoomSlug } from "@/lib/room-slug";
+import { BUG_REPORT_URL } from "@/lib/links";
+import { Bug } from "lucide-react";
 
 type LoginPageProps = {
   roomId: string;
@@ -51,6 +53,20 @@ export function LoginPage({
   return (
     <main className="relative isolate grid min-h-dvh w-full min-w-0 grid-rows-[1fr_auto] overflow-x-hidden bg-vaux-bg-dark font-mono text-white box-border">
       <LoginBackground />
+
+      {BUG_REPORT_URL && (
+        <a
+          href={BUG_REPORT_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="absolute right-[max(0.75rem,env(safe-area-inset-right))] top-[max(0.75rem,env(safe-area-inset-top))] z-30 flex cursor-pointer items-center gap-1.5 rounded-xl bg-vaux-bg/90 px-3 py-1.5 text-xs text-zinc-400 backdrop-blur-sm transition-colors hover:bg-vaux-green hover:font-bold hover:text-black"
+          title="Report a bug"
+          aria-label="Report a bug"
+        >
+          <Bug className="size-3.5" aria-hidden />
+          <span className="hidden sm:inline">report bug</span>
+        </a>
+      )}
 
       <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12">
         <div className="flex w-full max-w-[17.5rem] min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/60 bg-vaux-bg-dark/70 p-4 shadow-xl shadow-black/30 backdrop-blur-md sm:max-w-xs sm:gap-4 sm:p-5 md:max-w-sm md:p-6">

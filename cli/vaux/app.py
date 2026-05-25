@@ -113,6 +113,30 @@ APP_WEBSITE = "https://itsvee0120.github.io/violet-website/"
 APP_GITHUB = "https://github.com/itsvee0120/vaux"
 APP_PYPI = "https://pypi.org/project/vaux-cli/"
 
+# Paste the bug report Google Form URL here.
+# Leave empty to hide the Google Form button in the bug-report modal.
+BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
+
+
+def build_github_issue_url(in_room: bool) -> str:
+    """Returns a GitHub new-issue URL pre-filled with env info + a template body."""
+    import platform
+    import urllib.parse
+
+    body = (
+        "## What happened?\n\n\n"
+        "## Steps to reproduce\n1. \n2. \n3. \n\n"
+        "## Expected behavior\n\n\n"
+        "## ScreenShots or Media\n\n\n"
+        "---\n"
+        f"vaux-cli: {APP_VERSION}\n"
+        f"Python: {sys.version.split()[0]}\n"
+        f"OS: {platform.platform()}\n"
+        f"Context: {'in-room' if in_room else 'lobby'}\n"
+    )
+    params = urllib.parse.urlencode({"title": "[CLI - BUG REPORT] ", "body": body, "labels": "bug"})
+    return f"{APP_GITHUB}/issues/new?{params}"
+
 
 def _build_app_info(in_room: bool) -> str:
     lines = [
@@ -140,6 +164,8 @@ def _build_app_info(in_room: bool) -> str:
             "  - / =    volume down / up",
             "  ctrl+g   this screen, hit esc to close",
             "  ctrl+l   view listeners & transfer host (host)",
+            "  ctrl+b   report a bug",
+            "  ctrl+p   command palette (save screenshot, etc.)",
             "  ctrl+c   quit",
             "  type /host <username> to transfer host to another user",
         ])
@@ -149,7 +175,9 @@ def _build_app_info(in_room: bool) -> str:
             "Shortcuts",
             "  tab      next field",
             "  ctrl+g   this screen, hit esc to close",
-            "  ctrl+c   quit",  
+            "  ctrl+b   report a bug",
+            "  ctrl+p   command palette (save screenshot, etc.)",
+            "  ctrl+c   quit",
         ])
     return "\n".join(lines)
 
@@ -208,6 +236,115 @@ class InfoModal(ModalScreen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "info-close":
             self.dismiss()
+
+
+class BugReportModal(ModalScreen[None]):
+    """Overlay for filing a bug — Google Form (anonymous) or GitHub Issues."""
+
+    DEFAULT_CSS = """
+    BugReportModal {
+        align: center middle;
+    }
+
+    #bug-dialog {
+        width: 64;
+        height: auto;
+        max-height: 90%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #bug-title {
+        text-align: center;
+        color: $success;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #bug-text {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #bug-buttons {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #bug-buttons Button {
+        width: 1fr;
+        margin: 0 1;
+    }
+
+    #bug-note {
+        height: auto;
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #bug-close {
+        width: 100%;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+    ]
+
+    def __init__(self, in_room: bool = False):
+        super().__init__()
+        self.in_room = in_room
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="bug-dialog"):
+            yield Label("Report a bug", id="bug-title")
+            yield Static(
+                "Pick how you'd like to file this report:",
+                id="bug-text",
+            )
+            with Horizontal(id="bug-buttons"):
+                yield Button(
+                    "Google Form",
+                    id="bug-google",
+                    variant="success",
+                    disabled=not BUG_REPORT_GOOGLE_FORM_URL,
+                )
+                yield Button(
+                    "GitHub Issues",
+                    id="bug-github",
+                    variant="primary",
+                )
+            yield Static(
+                "Tip: close this overlay, then press [b]Ctrl+P[/b] to open the\n"
+                "command palette and choose [b]Save screenshot[/b] — vaux will write an SVG of the current screen.\n"
+                "You can attach it to your report.",
+                id="bug-note",
+            )
+            yield Button("Close", id="bug-close")
+
+    def action_dismiss(self) -> None:
+        self.dismiss()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        import webbrowser
+
+        bid = event.button.id
+        if bid == "bug-close":
+            self.dismiss()
+            return
+
+        if bid == "bug-google":
+            if not BUG_REPORT_GOOGLE_FORM_URL:
+                return
+            webbrowser.open(BUG_REPORT_GOOGLE_FORM_URL)
+            self.dismiss()
+            return
+
+        if bid == "bug-github":
+            webbrowser.open(build_github_issue_url(self.in_room))
+            self.dismiss()
+            return
 
 
 class ListenersModal(ModalScreen[None]):
@@ -391,6 +528,7 @@ class LobbyApp(App):
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+g", "info", "Info", show=True),
+        Binding("ctrl+b", "report_bug", "Bug", show=True),
         Binding("tab", "focus_next", "Next field", show=False),
     ]
 
@@ -520,6 +658,9 @@ class LobbyApp(App):
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=False))
+
+    def action_report_bug(self) -> None:
+        self.push_screen(BugReportModal(in_room=False))
 
 
 # ── NowPlaying widget ──────────────────────────────────────────────────────
@@ -692,6 +833,7 @@ class VauxApp(App):
         Binding("ctrl+d", "vote_down", "Vote ▼", show=False),
         Binding("ctrl+o", "toggle_playback", "Play/Pause", show=True),
         Binding("ctrl+n", "skip_track", "Skip ▶", show=True),
+        Binding("ctrl+b", "report_bug", "Bug", show=True),
         Binding("x", "remove_queue_item", "Remove", show=True),
         Binding("delete", "remove_queue_item", "Remove", show=False),
         Binding("-", "volume_down", "Vol -", show=True),
@@ -1043,6 +1185,9 @@ class VauxApp(App):
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=True))
+
+    def action_report_bug(self) -> None:
+        self.push_screen(BugReportModal(in_room=True))
 
     def action_show_listeners(self) -> None:
         if not self.is_host:

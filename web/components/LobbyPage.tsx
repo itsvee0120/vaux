@@ -22,7 +22,9 @@ import {
   Users,
   ChevronDownIcon,
   LogOut,
+  Bug,
 } from "lucide-react";
+import { BUG_REPORT_URL } from "@/lib/links";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -104,28 +106,44 @@ export function LobbyPage({
 
   return (
     <main className="flex min-h-dvh w-full flex-col bg-black font-mono text-white">
-      <div className="flex items-center gap-3 border-b border-vaux-green px-6 py-3">
+      <div className="flex items-center gap-2 border-b border-vaux-green px-3 py-3 sm:gap-3 sm:px-6">
         <button
           type="button"
           onClick={onLeave}
-          className="cursor-pointer text-lg font-bold text-vaux-green transition-colors hover:text-vaux-light"
+          className="shrink-0 cursor-pointer text-lg font-bold text-vaux-green transition-colors hover:text-vaux-light"
           title="Leave room"
         >
           vaux
         </button>
-        <span className="text-zinc-600">/</span>
-        <span className="text-sm text-vaux-green-dark">{roomId}</span>
-        <span className="ml-auto text-xs text-vaux-green-dark">
+        <span className="shrink-0 text-zinc-600">/</span>
+        <span className="min-w-0 truncate text-sm text-vaux-green-dark">
+          {roomId}
+        </span>
+        <span className="ml-auto min-w-0 truncate text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
+        {BUG_REPORT_URL && (
+          <a
+            href={BUG_REPORT_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+            title="Report a bug"
+            aria-label="Report a bug"
+          >
+            <Bug className="size-3.5" aria-hidden />
+            <span className="hidden sm:inline">report bug</span>
+          </a>
+        )}
         <button
           type="button"
           onClick={onLeave}
-          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+          className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
           title="Leave room"
+          aria-label="Leave room"
         >
           <LogOut className="size-3.5" aria-hidden />
-          leave
+          <span className="hidden sm:inline">leave</span>
         </button>
       </div>
 
