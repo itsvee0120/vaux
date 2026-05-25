@@ -164,6 +164,7 @@ export function LoginPage({
               value={username}
               onChange={(e) => onUsernameChange(e.target.value)}
               autoComplete="nickname"
+              autoFocus={mode === "create"}
             />
 
             <button

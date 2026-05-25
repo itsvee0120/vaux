@@ -92,8 +92,15 @@ export function LobbyPage({
 }: LobbyPageProps) {
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekUi, setSeekUi] = useState(0);
+  const [copiedRoom, setCopiedRoom] = useState(false);
   const syncedPosition = getSyncedPosition(playback);
   const seekValue = isSeeking ? seekUi : syncedPosition;
+
+  function handleCopyRoom() {
+    navigator.clipboard.writeText(roomId);
+    setCopiedRoom(true);
+    setTimeout(() => setCopiedRoom(false), 1500);
+  }
 
   const nowPlaying = playback.videoId
     ? {
@@ -116,9 +123,20 @@ export function LobbyPage({
           vaux
         </button>
         <span className="shrink-0 text-zinc-600">/</span>
-        <span className="min-w-0 truncate text-sm text-vaux-green-dark">
+        <span
+          className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
+            copiedRoom
+              ? "text-vaux-green"
+              : "text-vaux-green-dark hover:text-vaux-green"
+          }`}
+          onClick={handleCopyRoom}
+          title="Copy room name"
+        >
           {roomId}
         </span>
+        {copiedRoom && (
+          <span className="shrink-0 text-xs text-vaux-green">✓ copied</span>
+        )}
         <span className="ml-auto min-w-0 truncate text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
@@ -459,7 +477,9 @@ export function LobbyPage({
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (
                     <>
-                      <span className="text-vaux-green">{m.username}: </span>
+                      <span className="text-vaux-green">
+                        {m.username.slice(0, 20)}:{" "}
+                      </span>
                       <span className="text-vaux-light">{m.text}</span>
                     </>
                   )}
@@ -467,14 +487,24 @@ export function LobbyPage({
               ))}
               <div ref={chatEndRef} />
             </div>
-            <div className="flex gap-2 p-2">
+            <div className="relative flex gap-2 p-2">
               <input
                 className="flex-1 rounded border border-vaux-green-dark bg-zinc-900 px-2 py-1 text-xs focus:border-vaux-light focus:outline-none"
                 placeholder="say something..."
                 value={chatInput}
                 onChange={(e) => onChatInputChange(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && onSendChat()}
+                maxLength={500}
               />
+              {chatInput.length > 400 && (
+                <span
+                  className={`pointer-events-none absolute right-14 top-1/2 -translate-y-1/2 text-xs ${
+                    chatInput.length >= 500 ? "text-[#C44545]" : "text-zinc-600"
+                  }`}
+                >
+                  {500 - chatInput.length}
+                </span>
+              )}
               <button
                 className="rounded bg-vaux-green-dark px-3 py-2 text-xs hover:bg-vaux-green cursor-pointer transition-colors"
                 onClick={onSendChat}
