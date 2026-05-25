@@ -208,7 +208,7 @@ export function LobbyPage({
               </DropdownMenuTrigger>
             </TooltipTrigger>
             <TooltipContent side="bottom">
-              Open listener list — tap "make host" to transfer host
+              Open listener list — tap `&quot;make host&quot;` to transfer host
             </TooltipContent>
           </Tooltip>
           <DropdownMenuContent
