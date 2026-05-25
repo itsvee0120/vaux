@@ -5,10 +5,10 @@
 # Vaux
 
 A real-time music listening room - join a room, build a queue together, vote on tracks, and listen in sync. Available as both a web app and a terminal CLI.
-### Vaux on web:
+### Vaux on web: https://vaux-ten.vercel.app/ 
 <img width="1851" height="841" alt="image" src="https://github.com/user-attachments/assets/ad7438f3-6c78-4993-b205-1c802eeda15c" />
 
-### Vaux on CLI:
+### Vaux on CLI - 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/
 
 
 https://github.com/user-attachments/assets/ae3808a2-98e7-4c24-af91-6adc98b5a966
