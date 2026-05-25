@@ -32,7 +32,7 @@ https://github.com/user-attachments/assets/ae3808a2-98e7-4c24-af91-6adc98b5a966
 
 One backend, two clients. The real-time sync logic is written once and consumed by both the web app and the CLI over the same Socket.io event contract.
 
-**Zero-Quota Streaming:** The Node.js server runs `yt-dlp` with Node as a JS runtime to search YouTube and extract direct audio stream URLs — no YouTube API keys or Google quotas. The web client uses the YouTube IFrame player; the CLI uses `mpv` with stream URLs from the server (local yt-dlp fallback when needed).
+**No YouTube API key required — uses yt-dlp for metadata and stream extraction.:** The Node.js server runs `yt-dlp` with Node as a JS runtime to search YouTube and extract direct audio stream URLs — no YouTube API keys or Google quotas. The web client uses the YouTube IFrame player; the CLI uses `mpv` with stream URLs from the server (local yt-dlp fallback when needed).
 
 ```
 vaux/
@@ -331,6 +331,7 @@ Okay, not entirely.
 This project was created because I wanted to learn how to use Socket.IO across a CLI application and a web app. It started as a fun hobby project and a learning exercise, and I decided to publish it so others can play around with it, learn from it, or build their own ideas based on what I've made.
 
 > **Disclaimer:** This is a personal hobby project created for learning and experimentation. It is free, open source, non-commercial, and released under the MIT License. No donations, sponsorships, subscriptions, or other forms of compensation are requested or expected. If you find it useful, that's more than enough.
+> This project is intended for personal and educational purposes. While released under the MIT License, the author’s intent is for this project to remain a learning-focused, non-commercial open-source project.
 
 ---
 
