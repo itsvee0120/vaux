@@ -39,6 +39,12 @@ Or:
 pip install vaux-cli
 ```
 
+Upgrade to latest release
+
+```bash
+pip install --upgrade vaux-cli
+```
+
 ## Usage
 
 Launch the interactive lobby:
@@ -62,21 +68,21 @@ vaux --server http://localhost:4000 my-room -u yourname
 
 ## Keyboard shortcuts
 
-| Key        | Action                              |
-| ---------- | ----------------------------------- |
-| `Ctrl+S`   | Focus search                        |
-| `Ctrl+T`   | Focus chat                          |
-| `Ctrl+O`   | Play / pause (host)                 |
-| `Ctrl+N`   | Skip track (host)                   |
-| `x` / `Del`| Remove queue item (host, queue focused) |
-| `Ctrl+U`   | Vote up selected track              |
-| `Ctrl+D`   | Vote down selected track            |
-| `Ctrl+G`   | Info (version, links, shortcuts)    |
-| `Ctrl+L`   | Listeners & transfer host (host)    |
-| `Ctrl+B`   | Report a bug (Google Form / GitHub) |
-| `Ctrl+P`   | Command palette (save screenshot, etc.) |
-| `-` / `=`  | Volume down / up                    |
-| `Ctrl+C`   | Quit                                |
+| Key         | Action                                  |
+| ----------- | --------------------------------------- |
+| `Ctrl+S`    | Focus search                            |
+| `Ctrl+T`    | Focus chat                              |
+| `Ctrl+O`    | Play / pause (host)                     |
+| `Ctrl+N`    | Skip track (host)                       |
+| `x` / `Del` | Remove queue item (host, queue focused) |
+| `Ctrl+U`    | Vote up selected track                  |
+| `Ctrl+D`    | Vote down selected track                |
+| `Ctrl+G`    | Info (version, links, shortcuts)        |
+| `Ctrl+L`    | Listeners & transfer host (host)        |
+| `Ctrl+B`    | Report a bug (Google Form / GitHub)     |
+| `Ctrl+P`    | Command palette (save screenshot, etc.) |
+| `-` / `=`   | Volume down / up                        |
+| `Ctrl+C`    | Quit                                    |
 
 ## Host transfer
 
