@@ -236,9 +236,11 @@ export function LobbyPage({
                 </div>
               </>
             ) : (
-              <div className="flex h-48 items-center justify-center text-sm text-zinc-600">
-                no track playing —{" "}
-                {isHost ? "press ▶ on a queue track" : "waiting for host"}
+              <div className="flex h-48 items-center justify-center px-4 text-center text-sm text-zinc-600">
+                <span className="max-w-xs">
+                  no track playing —{" "}
+                  {isHost ? "press ▶ on a queue track" : "waiting for host"}
+                </span>
               </div>
             )}
           </div>
