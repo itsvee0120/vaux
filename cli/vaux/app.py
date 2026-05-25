@@ -115,8 +115,7 @@ APP_WEBSITE = "https://itsvee0120.github.io/violet-website/"
 APP_GITHUB = "https://github.com/itsvee0120/vaux"
 APP_PYPI = "https://pypi.org/project/vaux-cli/"
 
-# Paste the bug report Google Form URL here.
-# Leave empty to hide the Google Form button in the bug-report modal.
+
 BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
 
 
@@ -166,6 +165,9 @@ def _build_app_info(in_room: bool) -> str:
             "  ctrl+u   vote up",
             "  ctrl+d   vote down",
             "  - / =    volume down / up",
+            "  m        mute / unmute",
+            "  ctrl+k   copy room name",
+            "  ↑ / ↓    chat history (chat focused)",
             "  ctrl+g   this screen, hit esc to close",
             "  ctrl+l   view listeners & transfer host (host)",
             "  ctrl+b   report a bug",
@@ -733,17 +735,30 @@ class NowPlaying(Static):
             return f"🔉 {self._volume}%"
         return f"🔊 {self._volume}%"
 
+    def _progress_bar(self, pos: float, total: float, width: int = 36) -> str:
+        if total <= 0:
+            return "░" * width
+        ratio = min(max(pos / total, 0.0), 1.0)
+        filled = int(width * ratio)
+        return "█" * filled + "░" * (width - filled)
+
     def _render_state(self):
         s = self._state
         vol = self._volume_indicator()
         if not s.video_id:
-            self.update(f"◼  no track playing  {vol}")
+            self.update(f"◼  no track playing\n    {vol}")
             return
         icon = "⏸" if s.is_playing else "▶"
         pos = s.formatted_position()
+        total = s.formatted_duration() if s.duration > 0 else "—"
         title = (s.title or "")[:50]
         channel = s.channel or ""
-        self.update(f"{icon}  {title}\n    {channel}  [{pos}]  {vol}")
+        bar = self._progress_bar(s.synced_position(), s.duration)
+        self.update(
+            f"{icon}  {title}\n"
+            f"    {channel}  [{pos} / {total}]  {vol}\n"
+            f"    {bar}"
+        )
 
 
 # ── QueueItem widget ───────────────────────────────────────────────────────
@@ -848,7 +863,7 @@ class VauxApp(App):
     }
 
     #now-playing {
-        height: 5;
+        height: 6;
         padding: 1;
         border-bottom: solid $primary-darken-2;
         color: $success;
@@ -898,6 +913,8 @@ class VauxApp(App):
         Binding("delete", "remove_queue_item", "Remove", show=False),
         Binding("-", "volume_down", "Vol -", show=False),
         Binding("=", "volume_up", "Vol +", show=False),
+        Binding("m", "toggle_mute", "Mute", show=False),
+        Binding("ctrl+k", "copy_room", "Copy room", show=False),
     ]
 
     def __init__(self, room_id: str, username: str, server_url: str):
@@ -917,6 +934,9 @@ class VauxApp(App):
         self.player_running = False
         self.stream_cache: dict[str, str] = {}
         self.volume = 100
+        self._volume_before_mute = 100
+        self._chat_history: list[str] = []
+        self._chat_history_idx: int = -1
 
         self._search_loading = False
         self._search_dots_timer = None
@@ -984,21 +1004,23 @@ class VauxApp(App):
         self.socket.on("reaction:broadcast", self._on_reaction)
 
     async def _on_room_joined(self, data: dict):
-        self.role = data.get("role", "listener")
-        self.is_host = self.role == "host"
-        self.members = data.get("members", [])
-        self.queue = data.get("queue", [])
-        pb = data.get("playbackState") or {}
-        self.playback = PlaybackState.from_dict(pb)
-        await self._refresh_queue()
-        self._refresh_now_playing()
-        self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
-        self._update_header_subtitle()
-        await self._apply_playback()
-        self.screen.loading = False
-        self._post_system(f"joined [{self.role}]")
-        if not getattr(self, "player", None):
-            self._post_system("mpv not found on system. Please install mpv to hear audio.")
+        try:
+            self.role = data.get("role", "listener")
+            self.is_host = self.role == "host"
+            self.members = data.get("members", [])
+            self.queue = data.get("queue", [])
+            pb = data.get("playbackState") or {}
+            self.playback = PlaybackState.from_dict(pb)
+            await self._refresh_queue()
+            self._refresh_now_playing()
+            self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
+            self._update_header_subtitle()
+            await self._apply_playback()
+            self._post_system(f"joined [{self.role}]")
+            if not getattr(self, "player", None):
+                self._post_system("mpv not found on system. Please install mpv to hear audio.")
+        finally:
+            self.screen.loading = False
 
     async def _on_member_joined(self, data: dict):
         user_id = data.get("userId")
@@ -1029,7 +1051,16 @@ class VauxApp(App):
         await self._refresh_queue()
 
     async def _on_queue_updated(self, data: dict):
+        old_ids = {t["id"] for t in self.queue}
         self.queue = data.get("queue", [])
+        for track in self.queue:
+            if track["id"] in old_ids:
+                continue
+            if track.get("addedBy") == self.username:
+                continue
+            title = (track.get("title") or "")[:40]
+            added_by = track.get("addedBy", "?")
+            self.notify(f"♪ {title} added by {added_by}", timeout=3)
         await self._refresh_queue()
 
     async def _on_playback_state(self, data: dict):
@@ -1228,6 +1259,10 @@ class VauxApp(App):
         if not text:
             return
 
+        self._chat_history.insert(0, text)
+        self._chat_history = self._chat_history[:50]
+        self._chat_history_idx = -1
+
         if text.startswith("/host "):
             if not self.is_host:
                 self._post_system("Only the host can transfer privileges.")
@@ -1253,7 +1288,12 @@ class VauxApp(App):
             if idx is not None and idx < len(self.search_results):
                 r = self.search_results[idx]
                 await self.socket.add_to_queue(
-                    self.room_id, r.video_id, r.title, r.channel, r.thumbnail
+                    self.room_id,
+                    r.video_id,
+                    r.title,
+                    r.channel,
+                    r.thumbnail,
+                    r.duration,
                 )
                 self._post_system(f"added: {r.title[:40]}")
                 lv = self.query_one("#search-results", ListView)
@@ -1352,6 +1392,42 @@ class VauxApp(App):
         if getattr(self, "player", None):
             self.player.set_volume(self.volume)
         self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
+
+    def action_toggle_mute(self):
+        if self.volume == 0:
+            self.volume = self._volume_before_mute or 100
+        else:
+            self._volume_before_mute = self.volume
+            self.volume = 0
+        if getattr(self, "player", None):
+            self.player.set_volume(self.volume)
+        self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
+
+    def action_copy_room(self):
+        try:
+            pyperclip.copy(self.room_id)
+            self.notify("Room name copied!", timeout=2)
+        except pyperclip.PyperclipException:
+            self.notify("Clipboard unavailable", severity="error", timeout=3)
+
+    def on_key(self, event) -> None:
+        if self.focused is None or self.focused.id != "chat-input":
+            return
+        inp = self.query_one("#chat-input", Input)
+        if event.key == "up" and self._chat_history:
+            self._chat_history_idx = min(
+                self._chat_history_idx + 1, len(self._chat_history) - 1
+            )
+            inp.value = self._chat_history[self._chat_history_idx]
+            event.stop()
+        elif event.key == "down":
+            self._chat_history_idx = max(self._chat_history_idx - 1, -1)
+            inp.value = (
+                self._chat_history[self._chat_history_idx]
+                if self._chat_history_idx >= 0
+                else ""
+            )
+            event.stop()
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=True))

@@ -27,6 +27,7 @@ class SearchResult:
     title: str
     channel: str
     thumbnail: str
+    duration: float = 0.0
 
 
 async def ping_server(server_url: str, timeout: float = 30.0) -> None:
@@ -59,6 +60,7 @@ async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
             title=r["title"],
             channel=r["channel"],
             thumbnail=r["thumbnail"],
+            duration=r.get("duration", 0.0) or 0.0,
         )
         for r in data.get("results", [])
     ]

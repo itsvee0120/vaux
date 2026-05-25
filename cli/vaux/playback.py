@@ -18,6 +18,7 @@ class PlaybackState:
     thumbnail: str | None = None
     track_id: str | None = None
     position_seconds: float = 0.0
+    duration: float = 0.0
     is_playing: bool = False
     updated_at: float = field(default_factory=lambda: time.time() * 1000)
 
@@ -30,6 +31,7 @@ class PlaybackState:
             thumbnail=data.get("thumbnail"),
             track_id=data.get("trackId"),
             position_seconds=data.get("positionSeconds", 0.0),
+            duration=data.get("duration", 0.0),
             is_playing=data.get("isPlaying", False),
             updated_at=data.get("updatedAt", time.time() * 1000),
         )
@@ -43,5 +45,10 @@ class PlaybackState:
 
     def formatted_position(self) -> str:
         secs = int(self.synced_position())
+        m, s = divmod(secs, 60)
+        return f"{m}:{s:02d}"
+
+    def formatted_duration(self) -> str:
+        secs = int(self.duration)
         m, s = divmod(secs, 60)
         return f"{m}:{s:02d}"
