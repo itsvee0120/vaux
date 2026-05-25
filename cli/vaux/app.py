@@ -32,6 +32,38 @@ from textual.widgets import (
 )
 from textual.reactive import reactive
 from rich.text import Text
+import unicodedata
+
+
+def _cell_len(text: str) -> int:
+    """Approximate terminal cell width. CJK / fullwidth glyphs count as 2,
+    combining marks as 0, everything else as 1. Good enough for budgeting
+    the now-playing line without depending on internal rich APIs."""
+    width = 0
+    for ch in text:
+        if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+            continue
+        width += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return width
+
+
+def _truncate_cells(text: str, max_cells: int) -> str:
+    """Truncate `text` so it occupies at most `max_cells` terminal columns,
+    counted via _cell_len."""
+    if max_cells <= 0:
+        return ""
+    width = 0
+    out: list[str] = []
+    for ch in text:
+        if unicodedata.category(ch) in ("Mn", "Me", "Cf"):
+            out.append(ch)
+            continue
+        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+        if width + w > max_cells:
+            break
+        out.append(ch)
+        width += w
+    return "".join(out)
 
 from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
@@ -764,22 +796,56 @@ class NowPlaying(Static):
         filled = int(width * ratio)
         return "█" * filled + "░" * (width - filled)
 
+    # Right column is 50 cols wide; #now-playing has padding: 1 on each
+    # side, leaving 48 usable terminal cells per line. Anything wider wraps
+    # and pushes the progress bar past the fixed height.
+    _CONTENT_CELLS = 48
+
+    @staticmethod
+    def _fit(text: str, max_cells: int) -> str:
+        """Truncate to terminal cell width, not character count, so wide
+        glyphs (CJK, emoji) don't blow past the column."""
+        if max_cells <= 0:
+            return ""
+        if _cell_len(text) <= max_cells:
+            return text
+        if max_cells == 1:
+            return "…"
+        return _truncate_cells(text, max_cells - 1) + "…"
+
     def _render_state(self):
         s = self._state
         vol = self._volume_indicator()
         if not s.video_id:
-            self.update(f"◼  no track playing\n    {vol}")
+            self.update(
+                Text(f"◼  no track playing\n    {vol}", no_wrap=True, overflow="ellipsis")
+            )
             return
         icon = "⏸" if s.is_playing else "▶"
         pos = s.formatted_position()
         total = s.formatted_duration() if s.duration > 0 else "—"
-        title = (s.title or "")[:50]
-        channel = s.channel or ""
+
+        # Line 1: "{icon}  {title}"  → 2 (icon) + 2 (spaces) = 4 cells prefix.
+        title_budget = self._CONTENT_CELLS - 4
+        title = self._fit(s.title or "", title_budget)
+
+        # Line 2: "    {channel}  [{pos} / {total}]  {vol}"
+        # Time + volume are short and predictable; whatever's left after them
+        # (and the 4-space indent + 2-space separators) is the channel budget.
+        time_str = f"[{pos} / {total}]"
+        suffix_cells = 2 + _cell_len(time_str) + 2 + _cell_len(vol)
+        channel_budget = self._CONTENT_CELLS - 4 - suffix_cells
+        channel = self._fit(s.channel or "", channel_budget)
+
         bar = self._progress_bar(s.synced_position(), s.duration)
         self.update(
-            f"{icon}  {title}\n"
-            f"    {channel}  [{pos} / {total}]  {vol}\n"
-            f"    {bar}"
+            Text(
+                f"{icon}  {title}\n"
+                f"    {channel}  {time_str}  {vol}\n"
+                f"    {bar}",
+                no_wrap=True,
+                overflow="ellipsis",
+            )
         )
 
 

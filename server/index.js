@@ -17,6 +17,16 @@ function ytdlpBaseArgs() {
 }
 
 const app = express();
+
+// Render (and most PaaS hosts) terminate TLS at a reverse proxy and forward
+// the real client IP in X-Forwarded-For. Without this, express-rate-limit
+// either (a) refuses to start, citing ERR_ERL_UNEXPECTED_X_FORWARDED_FOR, or
+// (b) keys every request off the proxy's IP — i.e. one shared bucket for the
+// entire internet, so a single noisy client locks out everyone. Trusting
+// exactly one hop is the documented fix; `true` would let any client forge
+// X-Forwarded-For and trivially bypass the limiter.
+app.set("trust proxy", 1);
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
