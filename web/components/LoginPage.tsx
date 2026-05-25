@@ -28,6 +28,7 @@ export function LoginPage({
 }: LoginPageProps) {
   const [mode, setMode] = useState<"create" | "join">("create");
   const [copied, setCopied] = useState(false);
+  const [pasted, setPasted] = useState(false);
 
   const [generatedSlug, setGeneratedSlug] = useState(
     () => roomId.trim() || generateRoomSlug(),
@@ -58,6 +59,19 @@ export function LoginPage({
     setTimeout(() => setCopied(false), 1500);
   }
 
+  async function handlePasteRoomId() {
+    try {
+      const text = await navigator.clipboard.readText();
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      onRoomIdChange(trimmed);
+      setPasted(true);
+      setTimeout(() => setPasted(false), 1500);
+    } catch {
+      // Clipboard read may fail (permissions / unsupported); fall back silently.
+    }
+  }
+
   return (
     <main className="relative isolate grid min-h-dvh w-full min-w-0 grid-rows-[1fr_auto] overflow-x-hidden bg-vaux-bg-dark font-mono text-white box-border">
       <LoginBackground />
@@ -83,7 +97,7 @@ export function LoginPage({
       )}
 
       <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12">
-        <div className="flex w-full max-w-[17.5rem] min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/60 bg-vaux-bg-dark/70 p-4 shadow-xl shadow-black/30 backdrop-blur-md sm:max-w-xs sm:gap-4 sm:p-5 md:max-w-sm md:p-6">
+        <div className="flex w-full max-w-md min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/60 bg-vaux-bg-dark/70 p-6 shadow-xl shadow-black/30 backdrop-blur-md sm:max-w-lg sm:gap-4 sm:p-10 md:max-w-xl md:p-12">
           <header className="text-center sm:text-left">
             <h1 className="font-bold leading-[0.95] tracking-tight text-vaux-green text-[clamp(2.5rem,14vw,4.75rem)] sm:text-[clamp(2.75rem,12vw,5rem)]">
               VAUX
@@ -173,18 +187,39 @@ export function LoginPage({
                 </Tooltip>
               </div>
             ) : (
-              <input
-                className="w-full rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3 text-base focus:border-vaux-green focus:outline-none sm:text-sm"
-                placeholder="room name (e.g. velvet-orbit-42)"
-                value={roomId}
-                onChange={(e) => onRoomIdChange(e.target.value)}
-                autoComplete="off"
-                autoFocus
-              />
+              <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-vaux-bg/90 pr-3 focus-within:border-vaux-green">
+                <input
+                  className="min-w-0 flex-1 rounded-2xl bg-transparent px-3 py-3 text-base focus:outline-none sm:text-xs"
+                  placeholder="room name (e.g. velvet-orbit-42)"
+                  value={roomId}
+                  onChange={(e) => onRoomIdChange(e.target.value)}
+                  autoComplete="off"
+                  autoFocus
+                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={handlePasteRoomId}
+                      className={`shrink-0 cursor-pointer text-xs transition-colors ${
+                        pasted
+                          ? "text-vaux-green"
+                          : "text-zinc-500 hover:text-vaux-green"
+                      }`}
+                      aria-label="Paste room name from clipboard"
+                    >
+                      {pasted ? "✓ pasted" : "📋paste"}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">
+                    Paste room name from clipboard
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             )}
 
             <input
-              className="w-full rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3 text-base focus:border-vaux-green focus:outline-none sm:text-sm"
+              className="w-full rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3 text-base focus:border-vaux-green focus:outline-none sm:text-xs"
               placeholder="your name"
               value={username}
               onChange={(e) => onUsernameChange(e.target.value)}
@@ -219,21 +254,17 @@ export function LoginPage({
             href="https://github.com/itsvee0120/vaux"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline"
           >
             Vaux on Github
           </a>
         </span>
-        <span className="order-1 w-full rounded-xl bg-vaux-bg px-3 py-1.5 text-center text-xs text-zinc-400 sm:order-2 sm:w-auto sm:text-zinc-500">
-          Made with <span aria-label="love">{"\u{1F497}"}</span>
-          {" by "}
+        <span className="order-1 w-full cursor-pointer rounded-xl bg-vaux-bg px-3 py-1.5 text-center text-xs text-zinc-400 hover:bg-vaux-green hover:font-bold hover:text-black sm:order-2 sm:w-auto sm:text-zinc-500">
           <a
             href="https://itsvee0120.github.io/violet-website/"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline hover:text-vaux-green"
           >
-            Vee
+            Made with <span aria-label="love">{"\u{1F497}"}</span> by Violet
           </a>
         </span>
         <span className="order-3 cursor-pointer rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 hover:bg-vaux-green hover:font-bold hover:text-black sm:text-zinc-500">
@@ -241,7 +272,6 @@ export function LoginPage({
             href="https://pypi.org/project/vaux-cli/"
             target="_blank"
             rel="noopener noreferrer"
-            className="underline"
           >
             Vaux on CLI via PyPI
           </a>
