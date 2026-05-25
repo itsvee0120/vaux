@@ -40,6 +40,27 @@ from vaux.mpv import find_mpv
 from vaux.room_slug import generate_room_slug
 
 import subprocess
+
+# Stable per-user palette. userId is hashed deterministically (matches the
+# web client's hash) so the same person gets the same color across both
+# clients, and two users sharing a display name still render in different
+# colors. Six colors keeps small rooms unambiguous.
+CHAT_COLORS = (
+    "#52d4a0",
+    "#f0c54f",
+    "#7ec8e3",
+    "#e07fc4",
+    "#ff8a5b",
+    "#a685e2",
+)
+
+
+def color_for_user(user_id: str) -> str:
+    if not user_id:
+        return CHAT_COLORS[0]
+    idx = sum(ord(c) for c in user_id) % len(CHAT_COLORS)
+    return CHAT_COLORS[idx]
+
 class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
@@ -924,6 +945,9 @@ class VauxApp(App):
         self.server_url = server_url
 
         self.socket = VauxSocket(server_url)
+        # Real identity is the server-assigned UUID we get back in room:joined.
+        # All host / "is this me" checks compare against this, not username.
+        self.user_id = ""
         self.is_host = False
         self.role = "listener"
         self.members: list[dict] = []
@@ -984,7 +1008,7 @@ class VauxApp(App):
         self.screen.loading = True
         self._register_socket_events()
         await self.socket.connect()
-        await self.socket.join_room(self.room_id, self.username, self.username)
+        await self.socket.join_room(self.room_id, self.username)
         self.set_interval(1.0, self._check_player_status)
 
     async def on_unmount(self):
@@ -1005,6 +1029,7 @@ class VauxApp(App):
 
     async def _on_room_joined(self, data: dict):
         try:
+            self.user_id = data.get("userId", "")
             self.role = data.get("role", "listener")
             self.is_host = self.role == "host"
             self.members = data.get("members", [])
@@ -1041,7 +1066,7 @@ class VauxApp(App):
 
     async def _on_host_changed(self, data: dict):
         new_host_id = data.get("newHostId")
-        self.is_host = new_host_id == self.username
+        self.is_host = bool(self.user_id) and new_host_id == self.user_id
         self.role = "host" if self.is_host else "listener"
         for member in self.members:
             member["role"] = "host" if member.get("userId") == new_host_id else "listener"
@@ -1056,7 +1081,12 @@ class VauxApp(App):
         for track in self.queue:
             if track["id"] in old_ids:
                 continue
-            if track.get("addedBy") == self.username:
+            # Prefer userId match (accurate even when usernames collide);
+            # fall back to username for older servers.
+            added_by_id = track.get("addedById")
+            if added_by_id and added_by_id == self.user_id:
+                continue
+            if not added_by_id and track.get("addedBy") == self.username:
                 continue
             title = (track.get("title") or "")[:40]
             added_by = track.get("addedBy", "?")
@@ -1070,8 +1100,9 @@ class VauxApp(App):
 
     async def _on_chat_message(self, data: dict):
         uname = data.get("username", "?")
+        uid = data.get("userId", "")
         text = data.get("text", "")
-        self._post_chat(uname, text)
+        self._post_chat(uname, text, uid)
 
     async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")
@@ -1093,10 +1124,11 @@ class VauxApp(App):
         name = (host.get("username") if host else None) or "?"
         self.sub_title = f"host: {name[:30]}"
 
-    def _post_chat(self, username: str, text: str):
+    def _post_chat(self, username: str, text: str, user_id: str = ""):
         log = self.query_one("#chat-log", RichLog)
         t = Text()
-        t.append(f"{username[:20]} ", style="bold green")
+        color = color_for_user(user_id) if user_id else "#52d4a0"
+        t.append(f"{username[:20]} ", style=f"bold {color}")
         t.append(text)
         log.write(t)
 
@@ -1267,8 +1299,19 @@ class VauxApp(App):
             if not self.is_host:
                 self._post_system("Only the host can transfer privileges.")
             else:
-                new_host = text[6:].strip()
-                await self.socket.transfer_host(self.room_id, new_host)
+                target = text[6:].strip()
+                # First listener whose display name matches wins. With server-
+                # assigned userIds, two users can share a name — if that
+                # happens, the earlier joiner is promoted.
+                match = next(
+                    (m for m in self.members
+                     if m.get("username") == target and m.get("role") != "host"),
+                    None,
+                )
+                if not match:
+                    self._post_system(f"no listener named '{target}'")
+                else:
+                    await self.socket.transfer_host(self.room_id, match["userId"])
             inp.value = ""
             return
 
@@ -1276,7 +1319,7 @@ class VauxApp(App):
             self._post_system("message too long (max 300 chars)")
             return
 
-        await self.socket.send_chat(self.room_id, self.username, self.username, text)
+        await self.socket.send_chat(self.room_id, text)
         inp.value = ""
 
     # ── list selection — queue and search results ──────────────────────────

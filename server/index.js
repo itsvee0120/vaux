@@ -3,6 +3,7 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
@@ -212,30 +213,46 @@ function advanceToNextTrack(room, roomId) {
 // SOCKETS
 // ─────────────────────────────
 io.on("connection", (socket) => {
-  console.log(`[socket] connected: ${socket.id}`);
+  // Server-assigned identity. Client cannot set or override this — kills
+  // impersonation where one user joins as another's userId.
+  socket.data = { userId: crypto.randomUUID() };
+  console.log(`[socket] connected: ${socket.id} (${socket.data.userId})`);
 
   // ── JOIN ROOM ──
-  socket.on("room:join", ({ roomId, userId, username }) => {
+  socket.on("room:join", ({ roomId, username }) => {
+    if (typeof roomId !== "string" || !roomId.trim()) return;
+
+    // Username stays user-controlled but is sanitized server-side: trim,
+    // cap length, reject empty/non-string. Display labels can collide; the
+    // userId underneath is always unique.
+    const cleanName =
+      typeof username === "string" ? username.trim().slice(0, 32) : "";
+    if (!cleanName) return;
+
+    const userId = socket.data.userId;
     const room = getRoom(roomId);
 
     socket.join(roomId);
-    socket.data = { roomId, userId, username };
+    socket.data.roomId = roomId;
+    socket.data.username = cleanName;
 
-    const existing = room.members.find((m) => m.userId === userId);
-
-    if (!existing) {
+    if (!getMember(room, userId)) {
       room.members.push({
         userId,
-        username,
+        username: cleanName,
         role: room.members.length === 0 ? "host" : "listener",
       });
-      socket.to(roomId).emit("room:member_joined", { userId, username });
+      socket.to(roomId).emit("room:member_joined", {
+        userId,
+        username: cleanName,
+      });
     }
 
     const member = getMember(room, userId);
 
     socket.emit("room:joined", {
       room: { id: roomId },
+      userId,
       members: room.members,
       queue: room.queue,
       playbackState: room.playbackState,
@@ -267,6 +284,7 @@ io.on("connection", (socket) => {
   socket.on(
     "queue:add",
     ({ roomId, videoId, title, channel, thumbnail, duration }) => {
+      if (!socket.data.username) return;
       const room = getRoom(roomId);
 
       const item = {
@@ -278,6 +296,7 @@ io.on("connection", (socket) => {
         duration: duration ?? 0,
         votes: 0,
         addedBy: socket.data.username,
+        addedById: socket.data.userId,
       };
 
       room.queue.push(item);
@@ -311,13 +330,19 @@ io.on("connection", (socket) => {
   });
 
   // ── CHAT ──
-  socket.on("chat:send", ({ roomId, userId, username, text }) => {
-    if (!text || text.length > 500) return;
+  socket.on("chat:send", ({ roomId, text }) => {
+    // Identity is stamped from socket.data, never from the client payload.
+    // Without this, anyone could forge messages from anyone.
+    if (!socket.data.username) return;
+    if (typeof text !== "string") return;
+
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 500) return;
 
     io.to(roomId).emit("chat:message", {
-      userId,
-      username,
-      text,
+      userId: socket.data.userId,
+      username: socket.data.username,
+      text: trimmed,
       timestamp: Date.now(),
     });
   });

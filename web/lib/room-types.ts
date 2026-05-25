@@ -12,6 +12,8 @@ export type Track = {
 export type Message = {
   username: string;
   text: string;
+  /** Server-assigned id of the sender. Used to color-hash colliding usernames. */
+  userId?: string;
   system?: boolean;
 };
 
