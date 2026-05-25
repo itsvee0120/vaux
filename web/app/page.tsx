@@ -27,7 +27,9 @@ const API_KEY = process.env.NEXT_PUBLIC_API_KEY || DEFAULT_API_KEY;
 
 function joinSocketRoom(roomId: string, username: string) {
   const socket = getSocket();
-  const payload = { roomId, userId: username, username };
+  // Server assigns userId on connection; client only sends its display name.
+  // Anything else would be ignored by the server.
+  const payload = { roomId, username };
   if (socket.connected) {
     socket.emit("room:join", payload);
   } else {
@@ -71,7 +73,8 @@ export default function Home() {
   const [searching, setSearching] = useState(false);
   const [playback, setPlayback] = useState<PlaybackState>(EMPTY_PLAYBACK);
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const usernameRef = useRef(username);
+  /** Our server-assigned userId. Source of truth for "is this me" checks. */
+  const myUserIdRef = useRef("");
   /** Set when joinRoom emits room:join so the session rejoin effect does not emit again. */
   const skipSessionRejoinRef = useRef(false);
 
@@ -79,15 +82,24 @@ export default function Home() {
     hydrated && session !== null && screen === "lobby" && !rejoinFailed;
 
   useEffect(() => {
-    usernameRef.current = username;
-  }, [username]);
-
-  useEffect(() => {
     const socket = getSocket();
 
     socket.on(
       "room:joined",
-      ({ queue, playbackState, role, members: initialMembers }) => {
+      ({
+        userId,
+        queue,
+        playbackState,
+        role,
+        members: initialMembers,
+      }: {
+        userId?: string;
+        queue: Track[];
+        playbackState?: PlaybackState;
+        role: string;
+        members?: { userId: string; username: string; role: string }[];
+      }) => {
+        myUserIdRef.current = userId ?? "";
         const stored = loadSession();
         if (stored) {
           setRoomId(stored.roomId);
@@ -126,7 +138,11 @@ export default function Home() {
     });
 
     socket.on("host:changed", ({ newHostId, newHostUsername }) => {
-      setIsHost(newHostId === usernameRef.current);
+      // Compare against the server-assigned userId, not username — two users
+      // can share a display name, but only one userId matches ours.
+      setIsHost(
+        Boolean(myUserIdRef.current) && newHostId === myUserIdRef.current,
+      );
       setMembers((prev) =>
         prev.map((m) => ({
           ...m,
@@ -142,8 +158,33 @@ export default function Home() {
 
     socket.on("queue:updated", ({ queue }) => setQueue(queue));
     socket.on("playback:state", (state: PlaybackState) => setPlayback(state));
-    socket.on("chat:message", ({ username: msgUsername, text }) => {
-      setMessages((p) => [...p, { username: msgUsername, text }]);
+    socket.on(
+      "chat:message",
+      ({
+        userId: msgUserId,
+        username: msgUsername,
+        text,
+      }: {
+        userId?: string;
+        username: string;
+        text: string;
+      }) => {
+        setMessages((p) => [
+          ...p,
+          { userId: msgUserId, username: msgUsername, text },
+        ]);
+      },
+    );
+
+    socket.on("chat:rate_limited", () => {
+      setMessages((p) => [
+        ...p,
+        {
+          username: "",
+          text: "slow down — too many messages",
+          system: true,
+        },
+      ]);
     });
 
     return () => {
@@ -154,6 +195,7 @@ export default function Home() {
       socket.off("queue:updated");
       socket.off("playback:state");
       socket.off("chat:message");
+      socket.off("chat:rate_limited");
     };
   }, []);
 
@@ -253,10 +295,10 @@ export default function Home() {
 
   function sendChat() {
     if (!chatInput.trim()) return;
+    // Server stamps userId + username from the socket session. Client cannot
+    // forge sender identity.
     getSocket().emit("chat:send", {
       roomId,
-      userId: username,
-      username,
       text: chatInput,
     });
     setChatInput("");
@@ -270,6 +312,7 @@ export default function Home() {
     clearSession();
     const socket = getSocket();
     if (socket.connected) socket.disconnect();
+    myUserIdRef.current = "";
     setScreen("lobby");
     setRoomId("");
     setRejoinFailed(false);

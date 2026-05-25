@@ -33,6 +33,26 @@ function formatTime(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+// Stable per-user palette. userId is hashed deterministically and the hash
+// matches the CLI's (sum of char codes mod palette length) so the same person
+// gets the same color across both clients. Two users sharing a display name
+// still render in distinguishable colors.
+const CHAT_COLORS = [
+  "#52d4a0",
+  "#f0c54f",
+  "#7ec8e3",
+  "#e07fc4",
+  "#ff8a5b",
+  "#a685e2",
+] as const;
+
+function colorForUser(userId: string | undefined): string {
+  if (!userId) return CHAT_COLORS[0];
+  let sum = 0;
+  for (let i = 0; i < userId.length; i++) sum += userId.charCodeAt(i);
+  return CHAT_COLORS[sum % CHAT_COLORS.length];
+}
+
 type LobbyPageProps = {
   roomId: string;
   username: string;
@@ -477,7 +497,10 @@ export function LobbyPage({
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (
                     <>
-                      <span className="text-vaux-green">
+                      <span
+                        className="font-semibold"
+                        style={{ color: colorForUser(m.userId) }}
+                      >
                         {m.username.slice(0, 20)}:{" "}
                       </span>
                       <span className="text-vaux-light">{m.text}</span>

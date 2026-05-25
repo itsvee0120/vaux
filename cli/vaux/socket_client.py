@@ -41,18 +41,19 @@ class VauxSocket:
         await self.sio.disconnect()
 
     # ── emit helpers — mirrors web client emit calls ───────────────────────
-    async def join_room(self, room_id: str, user_id: str, username: str):
+    async def join_room(self, room_id: str, username: str):
+        # Server assigns userId on connection; client only supplies its display
+        # name. Anything client-side sending userId would be ignored anyway.
         await self.sio.emit("room:join", {
             "roomId": room_id,
-            "userId": user_id,
             "username": username,
         })
 
-    async def send_chat(self, room_id: str, user_id: str, username: str, text: str):
+    async def send_chat(self, room_id: str, text: str):
+        # Server stamps userId/username from the socket session; client cannot
+        # forge sender identity on chat messages.
         await self.sio.emit("chat:send", {
             "roomId": room_id,
-            "userId": user_id,
-            "username": username,
             "text": text,
         })
 

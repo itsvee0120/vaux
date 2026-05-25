@@ -3,6 +3,8 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 const cors = require("cors");
+const crypto = require("crypto");
+const rateLimit = require("express-rate-limit");
 const fs = require("fs");
 const path = require("path");
 
@@ -58,10 +60,30 @@ app.use("/youtube", (req, res, next) => {
   next();
 });
 
+// Per-IP rate limits on the yt-dlp endpoints. Each call spawns a yt-dlp
+// process (1-10s, network-heavy), so unbounded requests are a trivial DoS
+// vector. Limits sized for normal interactive use with headroom for fast
+// typers; well below what scrapers/scanners typically push.
+const searchLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate limit exceeded — slow down" },
+});
+
+const streamLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate limit exceeded — slow down" },
+});
+
 // ─────────────────────────────
 // YOUTUBE SEARCH
 // ─────────────────────────────
-app.get("/youtube/search", async (req, res) => {
+app.get("/youtube/search", searchLimiter, async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: "query required" });
 
@@ -116,7 +138,7 @@ async function resolveStreamUrl(videoId) {
   }
 }
 
-app.get("/youtube/stream", async (req, res) => {
+app.get("/youtube/stream", streamLimiter, async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.status(400).json({ error: "videoId required" });
 
@@ -209,33 +231,73 @@ function advanceToNextTrack(room, roomId) {
 }
 
 // ─────────────────────────────
+// SOCKET RATE LIMITING
+// ─────────────────────────────
+// Tiny per-socket sliding-window limiter. No dependency; in-memory state
+// dies with the socket. Sized to allow normal interactive use (fast typers,
+// vote flipping) while killing flood attacks.
+function makeSocketLimiter(maxEvents, windowMs) {
+  return (socket, key) => {
+    const now = Date.now();
+    socket.data._rl = socket.data._rl || {};
+    const arr = (socket.data._rl[key] = socket.data._rl[key] || []);
+    while (arr.length && arr[0] < now - windowMs) arr.shift();
+    if (arr.length >= maxEvents) return false;
+    arr.push(now);
+    return true;
+  };
+}
+
+const chatLimiter = makeSocketLimiter(10, 10_000); // 10 msgs / 10s
+const queueAddLimiter = makeSocketLimiter(5, 30_000); // 5 adds / 30s
+const voteLimiter = makeSocketLimiter(20, 30_000); // 20 vote flips / 30s
+const joinLimiter = makeSocketLimiter(5, 30_000); // 5 joins / 30s
+
+// ─────────────────────────────
 // SOCKETS
 // ─────────────────────────────
 io.on("connection", (socket) => {
-  console.log(`[socket] connected: ${socket.id}`);
+  // Server-assigned identity. Client cannot set or override this — kills
+  // impersonation where one user joins as another's userId.
+  socket.data = { userId: crypto.randomUUID() };
+  console.log(`[socket] connected: ${socket.id} (${socket.data.userId})`);
 
   // ── JOIN ROOM ──
-  socket.on("room:join", ({ roomId, userId, username }) => {
+  socket.on("room:join", ({ roomId, username }) => {
+    if (!joinLimiter(socket, "join")) return;
+    if (typeof roomId !== "string" || !roomId.trim()) return;
+
+    // Username stays user-controlled but is sanitized server-side: trim,
+    // cap length, reject empty/non-string. Display labels can collide; the
+    // userId underneath is always unique.
+    const cleanName =
+      typeof username === "string" ? username.trim().slice(0, 32) : "";
+    if (!cleanName) return;
+
+    const userId = socket.data.userId;
     const room = getRoom(roomId);
 
     socket.join(roomId);
-    socket.data = { roomId, userId, username };
+    socket.data.roomId = roomId;
+    socket.data.username = cleanName;
 
-    const existing = room.members.find((m) => m.userId === userId);
-
-    if (!existing) {
+    if (!getMember(room, userId)) {
       room.members.push({
         userId,
-        username,
+        username: cleanName,
         role: room.members.length === 0 ? "host" : "listener",
       });
-      socket.to(roomId).emit("room:member_joined", { userId, username });
+      socket.to(roomId).emit("room:member_joined", {
+        userId,
+        username: cleanName,
+      });
     }
 
     const member = getMember(room, userId);
 
     socket.emit("room:joined", {
       room: { id: roomId },
+      userId,
       members: room.members,
       queue: room.queue,
       playbackState: room.playbackState,
@@ -267,6 +329,8 @@ io.on("connection", (socket) => {
   socket.on(
     "queue:add",
     ({ roomId, videoId, title, channel, thumbnail, duration }) => {
+      if (!socket.data.username) return;
+      if (!queueAddLimiter(socket, "queue:add")) return;
       const room = getRoom(roomId);
 
       const item = {
@@ -278,6 +342,7 @@ io.on("connection", (socket) => {
         duration: duration ?? 0,
         votes: 0,
         addedBy: socket.data.username,
+        addedById: socket.data.userId,
       };
 
       room.queue.push(item);
@@ -286,6 +351,7 @@ io.on("connection", (socket) => {
   );
 
   socket.on("queue:vote", ({ roomId, itemId, value }) => {
+    if (!voteLimiter(socket, "queue:vote")) return;
     const room = getRoom(roomId);
 
     const item = room.queue.find((i) => i.id === itemId);
@@ -311,13 +377,27 @@ io.on("connection", (socket) => {
   });
 
   // ── CHAT ──
-  socket.on("chat:send", ({ roomId, userId, username, text }) => {
-    if (!text || text.length > 500) return;
+  socket.on("chat:send", ({ roomId, text }) => {
+    // Identity is stamped from socket.data, never from the client payload.
+    // Without this, anyone could forge messages from anyone.
+    if (!socket.data.username) return;
+    if (typeof text !== "string") return;
+
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > 500) return;
+
+    if (!chatLimiter(socket, "chat")) {
+      // Private feedback to just this socket — never broadcast. Doesn't
+      // shame the user in chat; doesn't help attackers measure the limit
+      // against anyone else's view.
+      socket.emit("chat:rate_limited", { retryAfterMs: 5_000 });
+      return;
+    }
 
     io.to(roomId).emit("chat:message", {
-      userId,
-      username,
-      text,
+      userId: socket.data.userId,
+      username: socket.data.username,
+      text: trimmed,
       timestamp: Date.now(),
     });
   });
