@@ -184,6 +184,14 @@ APP_PYPI = "https://pypi.org/project/vaux-cli/"
 
 BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
 
+# Parent tracking issue for all reported bugs. Filed reports reference it in
+# the body so (a) a back-reference appears on the parent automatically and
+# (b) maintainers can attach the new issue as a sub-issue with one click from
+# the parent's "Sub-issues" panel. GitHub has no URL parameter to create a
+# sub-issue link directly from `issues/new`, so this reference is the closest
+# equivalent.
+BUG_REPORT_PARENT_ISSUE = 36
+
 
 def build_github_issue_url(in_room: bool) -> str:
     """Returns a GitHub new-issue URL pre-filled with env info + a template body."""
@@ -191,6 +199,9 @@ def build_github_issue_url(in_room: bool) -> str:
     import urllib.parse
 
     body = (
+        f"Parent issue: {APP_GITHUB}/issues/{BUG_REPORT_PARENT_ISSUE}\n"
+        "<!-- maintainer: please link this report as a sub-issue of "
+        f"#{BUG_REPORT_PARENT_ISSUE} via the parent's Sub-issues panel. -->\n\n"
         "## What happened?\n\n\n"
         "## Steps to reproduce\n1. \n2. \n3. \n\n"
         "## Expected behavior\n\n\n"
