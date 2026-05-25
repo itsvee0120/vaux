@@ -105,7 +105,7 @@ export function LobbyPage({
     : null;
 
   return (
-    <main className="flex min-h-dvh w-full flex-col bg-black font-mono text-white">
+    <main className="flex h-dvh w-full flex-col overflow-hidden bg-black font-mono text-white">
       <div className="flex items-center gap-2 border-b border-vaux-green px-3 py-3 sm:gap-3 sm:px-6">
         <button
           type="button"
@@ -149,7 +149,7 @@ export function LobbyPage({
 
       {/* Video Components Start Here */}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
-        <div className="flex min-w-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 p-4">
           <div className="overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
             {playback.videoId ? (
               <>
@@ -264,7 +264,7 @@ export function LobbyPage({
           </div>
 
           {/* Search/ Result & add Tracks Components Start Here */}
-          <div>
+          <div className="flex min-h-0 flex-1 flex-col">
             <div className="mb-3 flex gap-2">
               <input
                 className="flex-1 rounded border border-vaux-green-dark/40 bg-zinc-900 px-3 py-2 text-sm focus:border-vaux-green focus:outline-none"
@@ -290,7 +290,7 @@ export function LobbyPage({
             </div>
 
             {searchResults.length > 0 && (
-              <div className="flex flex-col gap-2">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
                 {searchResults.map((r) => (
                   <div
                     key={r.videoId}
@@ -323,7 +323,7 @@ export function LobbyPage({
         </div>
 
         {/* Queue Components Start Here */}
-        <div className="flex min-h-0 w-full shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:border-t-0 lg:border-l">
+        <div className="flex min-h-0 w-full flex-1 shrink-0 flex-col border-t border-vaux-green lg:w-80 lg:flex-none lg:border-t-0 lg:border-l">
           {/* Host Components Start Here */}
           {isHost && members.filter((m) => m.role !== "host").length > 0 && (
             <div className="border-b border-vaux-green-dark p-3">
@@ -444,9 +444,9 @@ export function LobbyPage({
             <p className="mb-1 px-3 pt-2 text-xs uppercase tracking-widest text-vaux-green">
               chat
             </p>
-            <div className="flex flex-1 flex-col gap-1 overflow-y-auto px-3">
+            <div className="flex min-w-0 flex-1 flex-col gap-1 overflow-y-auto px-3">
               {messages.map((m, i) => (
-                <div key={i} className="text-xs">
+                <div key={i} className="text-xs break-words [overflow-wrap:anywhere]">
                   {m.system ? (
                     <span className="italic text-zinc-600">{m.text}</span>
                   ) : (

@@ -65,9 +65,11 @@ app.get("/youtube/search", async (req, res) => {
   const { q } = req.query;
   if (!q) return res.status(400).json({ error: "query required" });
 
+  const limit = Math.min(parseInt(req.query.limit) || 20, 30);
+
   try {
     const stdout = await ytdlp.execPromise([
-      `ytsearch8:${q}`,
+      `ytsearch${limit}:${q}`,
       ...ytdlpBaseArgs(),
       "--dump-single-json",
       "--flat-playlist",

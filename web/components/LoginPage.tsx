@@ -22,6 +22,7 @@ export function LoginPage({
   onJoin,
 }: LoginPageProps) {
   const [mode, setMode] = useState<"create" | "join">("create");
+  const [copied, setCopied] = useState(false);
 
   const [generatedSlug, setGeneratedSlug] = useState(
     () => roomId.trim() || generateRoomSlug(),
@@ -48,6 +49,8 @@ export function LoginPage({
 
   function handleCopySlug() {
     navigator.clipboard.writeText(generatedSlug);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
   }
 
   return (
@@ -126,10 +129,14 @@ export function LoginPage({
                 <button
                   type="button"
                   onClick={handleCopySlug}
-                  className="shrink-0 cursor-pointer text-xs text-zinc-500 hover:text-vaux-green transition-colors"
+                  className={`shrink-0 cursor-pointer text-xs transition-colors ${
+                    copied
+                      ? "text-vaux-green"
+                      : "text-zinc-500 hover:text-vaux-green"
+                  }`}
                   title="Copy slug"
                 >
-                  {"📋copy"}
+                  {copied ? "✓ copied" : "📋copy"}
                 </button>
                 <button
                   type="button"

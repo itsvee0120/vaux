@@ -171,7 +171,7 @@ export default function Home() {
   }, [session, screen, rejoinFailed]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages]);
 
   const emitPlay = useCallback(

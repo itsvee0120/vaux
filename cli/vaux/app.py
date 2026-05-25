@@ -35,7 +35,7 @@ from rich.text import Text
 
 from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
-from vaux.api import search_youtube, SearchResult, get_stream_url
+from vaux.api import search_youtube, SearchResult, get_stream_url, ping_server
 from vaux.mpv import find_mpv
 from vaux.room_slug import generate_room_slug
 
@@ -102,6 +102,8 @@ LOBBY_TITLE = r"""____   _________   ____ _______  ___
   \     /    |    \    |  / /     \ 
    \___/\____|__  /______/ /___/\  \
                 \/               \_/"""
+LOBBY_TITLE_COMPACT = "VAUX"
+LOBBY_TITLE_MIN_WIDTH = 46  # terminal cols below which we fall back to compact title
 
 try:
     APP_VERSION = version("vaux-cli")
@@ -141,20 +143,22 @@ def build_github_issue_url(in_room: bool) -> str:
 def _build_app_info(in_room: bool) -> str:
     lines = [
         "listen together, in sync",
+        "audio may lag 5–10s on first play or skip, syncs automatically after",
         "",
         f"Version   {APP_VERSION}",
         f"Author    {APP_AUTHOR}",
         "",
         "Links",
-        f"  Website  {APP_WEBSITE}",
-        f"  GitHub   {APP_GITHUB}",
-        f"  PyPI     {APP_PYPI}",
+        f"  Website:  {APP_WEBSITE}",
+        f"  GitHub:   {APP_GITHUB}",
+        f"  PyPI:     {APP_PYPI}",
     ]
     if in_room:
         lines.extend([
             "",
             "Shortcuts",
             "  ctrl+s   search",
+            "  ctrl+r   clear search results",
             "  ctrl+t   chat",
             "  ctrl+o   play / pause  (host)",
             "  ctrl+n   skip track    (host)",
@@ -192,8 +196,10 @@ class InfoModal(ModalScreen[None]):
 
     #info-dialog {
         width: 62;
+        max-width: 95%;
         height: auto;
         max-height: 90%;
+        overflow-y: auto;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
@@ -212,7 +218,9 @@ class InfoModal(ModalScreen[None]):
     }
 
     #info-close {
+        dock: bottom;
         width: 100%;
+        margin-top: 1;
     }
     """
 
@@ -248,8 +256,10 @@ class BugReportModal(ModalScreen[None]):
 
     #bug-dialog {
         width: 64;
+        max-width: 95%;
         height: auto;
         max-height: 90%;
+        overflow-y: auto;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
@@ -356,9 +366,11 @@ class ListenersModal(ModalScreen[None]):
     }
 
     #listeners-dialog {
-        width: 48;
+        width: 56;
+        max-width: 95%;
         height: auto;
         max-height: 80%;
+        overflow-y: auto;
         border: thick $primary;
         background: $surface;
         padding: 1 2;
@@ -443,7 +455,9 @@ class LobbyApp(App):
     }
 
     #card {
-        width: 52;
+        width: auto;
+        max-width: 60;
+        min-width: 36;
         border: round $primary;
         padding: 1 2;
     }
@@ -523,6 +537,12 @@ class LobbyApp(App):
         color: $text-muted;
         margin-top: 1;
     }
+
+    #audio-note {
+        text-align: center;
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
@@ -560,11 +580,30 @@ class LobbyApp(App):
             yield Input(placeholder="your name", id="username-input")
             yield Button("create & join →", id="go-btn", variant="success")
             yield Label("", id="hint")
+            yield Static(
+                "audio may take 5–10s on first play or skip · syncs automatically after",
+                id="audio-note",
+            )
 
         yield Footer()
 
     def on_mount(self):
         self._apply_mode()
+        self._apply_title()
+        asyncio.create_task(ping_server(self.server_url))
+
+    def on_resize(self, event) -> None:
+        self._apply_title()
+
+    def _apply_title(self) -> None:
+        try:
+            title = self.query_one("#title", Label)
+        except Exception:
+            return
+        if self.size.width < LOBBY_TITLE_MIN_WIDTH:
+            title.update(LOBBY_TITLE_COMPACT)
+        else:
+            title.update(LOBBY_TITLE)
 
     def _apply_mode(self):
         slug_row   = self.query_one("#slug-row")
@@ -672,6 +711,7 @@ class NowPlaying(Static):
     def __init__(self, **kwargs):
         super().__init__("", **kwargs)
         self._state = PlaybackState()
+        self._volume = 100
 
     def on_mount(self):
         self.set_interval(1, self._render_state)
@@ -680,16 +720,21 @@ class NowPlaying(Static):
         self._state = state
         self._render_state()
 
+    def update_volume(self, volume: int) -> None:
+        self._volume = volume
+        self._render_state()
+
     def _render_state(self):
         s = self._state
+        vol = "muted" if self._volume == 0 else f"vol {self._volume}%"
         if not s.video_id:
-            self.update("◼  no track playing")
+            self.update(f"◼  no track playing  {vol}")
             return
         icon = "⏸" if s.is_playing else "▶"
         pos = s.formatted_position()
         title = (s.title or "")[:50]
         channel = s.channel or ""
-        self.update(f"{icon}  {title}\n    {channel}  [{pos}]")
+        self.update(f"{icon}  {title}\n    {channel}  [{pos}]  {vol}")
 
 
 # ── QueueItem widget ───────────────────────────────────────────────────────
@@ -821,6 +866,11 @@ class VauxApp(App):
     Label {
         padding: 0 1;
     }
+
+    .search-status {
+        color: $text-muted;
+        text-style: italic;
+    }
     """
 
     BINDINGS = [
@@ -833,11 +883,12 @@ class VauxApp(App):
         Binding("ctrl+d", "vote_down", "Vote ▼", show=False),
         Binding("ctrl+o", "toggle_playback", "Play/Pause", show=True),
         Binding("ctrl+n", "skip_track", "Skip ▶", show=True),
-        Binding("ctrl+b", "report_bug", "Bug", show=True),
-        Binding("x", "remove_queue_item", "Remove", show=True),
+        Binding("ctrl+r", "clear_search", "Clear Results", show=False),
+        Binding("ctrl+b", "report_bug", "Bug", show=False),
+        Binding("x", "remove_queue_item", "Remove", show=False),
         Binding("delete", "remove_queue_item", "Remove", show=False),
-        Binding("-", "volume_down", "Vol -", show=True),
-        Binding("=", "volume_up", "Vol +", show=True),
+        Binding("-", "volume_down", "Vol -", show=False),
+        Binding("=", "volume_up", "Vol +", show=False),
     ]
 
     def __init__(self, room_id: str, username: str, server_url: str):
@@ -857,6 +908,11 @@ class VauxApp(App):
         self.player_running = False
         self.stream_cache: dict[str, str] = {}
         self.volume = 100
+
+        self._search_loading = False
+        self._search_dots_timer = None
+        self._search_dot_count = 1
+        self._search_status_label: Label | None = None
 
         mpv_path = find_mpv()
         self.player = MPVPlayer(mpv_path) if mpv_path else None
@@ -879,7 +935,13 @@ class VauxApp(App):
             # right: now playing + chat
             with Vertical(id="right"):
                 yield NowPlaying(id="now-playing")
-                yield RichLog(id="chat-log", highlight=True, markup=True)
+                yield RichLog(
+                    id="chat-log",
+                    highlight=True,
+                    markup=True,
+                    wrap=True,
+                    min_width=20,
+                )
                 with Horizontal(id="chat-bar"):
                     yield Input(placeholder="say something...", id="chat-input")
                     yield Button("→", id="chat-btn", variant="success")
@@ -919,6 +981,7 @@ class VauxApp(App):
         self.playback = PlaybackState.from_dict(pb)
         await self._refresh_queue()
         self._refresh_now_playing()
+        self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
         await self._apply_playback()
         self._post_system(f"joined [{self.role}]")
         if not getattr(self, "player", None):
@@ -982,7 +1045,7 @@ class VauxApp(App):
     def _post_chat(self, username: str, text: str):
         log = self.query_one("#chat-log", RichLog)
         t = Text()
-        t.append(f"{username} ", style="bold green")
+        t.append(f"{username[:20]} ", style="bold green")
         t.append(text)
         log.write(t)
 
@@ -1063,20 +1126,88 @@ class VauxApp(App):
         query = inp.value.strip()
         if not query:
             return
-        results = await search_youtube(self.server_url, query)
+
+        await self._set_search_loading(True)
+        try:
+            results = await search_youtube(self.server_url, query)
+        except Exception as exc:
+            await self._set_search_loading(False)
+            lv = self.query_one("#search-results", ListView)
+            await lv.clear()
+            self.search_results = []
+            await lv.append(
+                ListItem(
+                    Label("  search failed", classes="search-status"),
+                    disabled=True,
+                )
+            )
+            self._post_system(f"Search failed: {exc}")
+            return
+
+        await self._set_search_loading(False)
+
         self.search_results = results
         lv = self.query_one("#search-results", ListView)
         await lv.clear()
-        for r in results:
-            await lv.append(SearchResultItem(r))
+        if not results:
+            await lv.append(
+                ListItem(
+                    Label("  no results found", classes="search-status"),
+                    disabled=True,
+                )
+            )
+        else:
+            for r in results:
+                await lv.append(SearchResultItem(r))
+        self.query_one("#results-label", Label).update(f"  results · {len(results)}")
         inp.value = ""
+
+    async def _set_search_loading(self, loading: bool) -> None:
+        """Toggles the searching-in-progress placeholder + disables inputs."""
+        inp = self.query_one("#search-input", Input)
+        btn = self.query_one("#search-btn", Button)
+        lv = self.query_one("#search-results", ListView)
+
+        if loading:
+            if self._search_loading:
+                return
+            self._search_loading = True
+            inp.disabled = True
+            btn.disabled = True
+            btn.label = "..."
+
+            self.query_one("#results-label", Label).update("  results")
+            await lv.clear()
+            self.search_results = []
+            self._search_dot_count = 1
+            status = Label("searching.", classes="search-status")
+            self._search_status_label = status
+            await lv.append(ListItem(status, disabled=True))
+            self._search_dots_timer = self.set_interval(0.4, self._tick_search_dots)
+        else:
+            if not self._search_loading:
+                return
+            self._search_loading = False
+            if self._search_dots_timer is not None:
+                self._search_dots_timer.stop()
+                self._search_dots_timer = None
+            self._search_status_label = None
+            inp.disabled = False
+            btn.disabled = False
+            btn.label = "Search"
+
+    def _tick_search_dots(self) -> None:
+        if self._search_status_label is None:
+            return
+        self._search_dot_count = (self._search_dot_count % 3) + 1
+        self._search_status_label.update("searching" + "." * self._search_dot_count)
 
     async def _do_send_chat(self):
         inp = self.query_one("#chat-input", Input)
         text = inp.value.strip()
         if not text:
             return
-            
+
         if text.startswith("/host "):
             if not self.is_host:
                 self._post_system("Only the host can transfer privileges.")
@@ -1084,6 +1215,10 @@ class VauxApp(App):
                 new_host = text[6:].strip()
                 await self.socket.transfer_host(self.room_id, new_host)
             inp.value = ""
+            return
+
+        if len(text) > 300:
+            self._post_system("message too long (max 300 chars)")
             return
 
         await self.socket.send_chat(self.room_id, self.username, self.username, text)
@@ -1101,6 +1236,10 @@ class VauxApp(App):
                     self.room_id, r.video_id, r.title, r.channel, r.thumbnail
                 )
                 self._post_system(f"added: {r.title[:40]}")
+                lv = self.query_one("#search-results", ListView)
+                await lv.clear()
+                self.search_results = []
+                self.query_one("#results-label", Label).update("  results")
 
         elif lv_id == "queue-list" and self.is_host:
             idx = event.list_view.index
@@ -1114,6 +1253,14 @@ class VauxApp(App):
 
     def action_focus_chat(self):
         self.query_one("#chat-input", Input).focus()
+
+    async def action_clear_search(self):
+        if not self.search_results:
+            return
+        lv = self.query_one("#search-results", ListView)
+        await lv.clear()
+        self.search_results = []
+        self.query_one("#results-label", Label).update("  results")
 
     async def action_vote_up(self):
         lv = self.query_one("#queue-list", ListView)
@@ -1146,7 +1293,7 @@ class VauxApp(App):
             self._post_system("Only the host can skip tracks.")
             return
         if self.playback.video_id:
-            self._post_system("Skipped track.")
+            self._post_system("Skipped track · next track loading, audio starts in ~5s…")
             await self._trigger_ended()
 
     def _focused_in_queue(self) -> bool:
@@ -1175,13 +1322,13 @@ class VauxApp(App):
         self.volume = max(0, self.volume - 10)
         if getattr(self, "player", None):
             self.player.set_volume(self.volume)
-        self._post_system(f"Volume: {self.volume}%")
+        self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
 
     def action_volume_up(self):
         self.volume = min(100, self.volume + 10)
         if getattr(self, "player", None):
             self.player.set_volume(self.volume)
-        self._post_system(f"Volume: {self.volume}%")
+        self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=True))
