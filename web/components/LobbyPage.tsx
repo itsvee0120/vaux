@@ -12,6 +12,11 @@ import {
   DropdownMenuContent,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 import {
   CirclePlus,
@@ -151,26 +156,37 @@ export function LobbyPage({
   return (
     <main className="flex h-dvh w-full flex-col overflow-hidden bg-black font-mono text-white">
       <div className="flex items-center gap-2 border-b border-vaux-green px-3 py-3 sm:gap-3 sm:px-6">
-        <button
-          type="button"
-          onClick={onLeave}
-          className="shrink-0 cursor-pointer text-lg font-bold text-vaux-green transition-colors hover:text-vaux-light"
-          title="Leave room"
-        >
-          vaux
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="shrink-0 cursor-pointer text-lg font-bold text-vaux-green transition-colors hover:text-vaux-light"
+              aria-label="Leave room"
+            >
+              vaux
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">Leave room — back to lobby</TooltipContent>
+        </Tooltip>
         <span className="shrink-0 text-zinc-600">/</span>
-        <span
-          className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
-            copiedRoom
-              ? "text-vaux-green"
-              : "text-vaux-green-dark hover:text-vaux-green"
-          }`}
-          onClick={handleCopyRoom}
-          title="Copy room name"
-        >
-          {roomId}
-        </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span
+              className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
+                copiedRoom
+                  ? "text-vaux-green"
+                  : "text-vaux-green-dark hover:text-vaux-green"
+              }`}
+              onClick={handleCopyRoom}
+            >
+              {roomId}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Click to copy room name — share to invite friends
+          </TooltipContent>
+        </Tooltip>
         {copiedRoom && (
           <span className="shrink-0 text-xs text-vaux-green">✓ copied</span>
         )}
@@ -178,28 +194,40 @@ export function LobbyPage({
           {isHost ? "host" : "listener"} · {username}
         </span>
         {BUG_REPORT_URL && (
-          <a
-            href={BUG_REPORT_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
-            title="Report a bug"
-            aria-label="Report a bug"
-          >
-            <Bug className="size-3.5" aria-hidden />
-            <span className="hidden sm:inline">report bug</span>
-          </a>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <a
+                href={BUG_REPORT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+                aria-label="Report a bug"
+              >
+                <Bug className="size-3.5" aria-hidden />
+                <span className="hidden sm:inline">report bug</span>
+              </a>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Report a bug or request a feature
+            </TooltipContent>
+          </Tooltip>
         )}
-        <button
-          type="button"
-          onClick={onLeave}
-          className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
-          title="Leave room"
-          aria-label="Leave room"
-        >
-          <LogOut className="size-3.5" aria-hidden />
-          <span className="hidden sm:inline">leave</span>
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={onLeave}
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+              aria-label="Leave room"
+            >
+              <LogOut className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">leave</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            Leave the room — your session is saved
+          </TooltipContent>
+        </Tooltip>
       </div>
 
       {/* Video Components Start Here */}
@@ -225,25 +253,40 @@ export function LobbyPage({
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     {isHost && (
                       <>
-                        <button
-                          type="button"
-                          className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
-                          onClick={() =>
-                            playback.isPlaying
-                              ? onPause(syncedPosition)
-                              : onPlay(syncedPosition)
-                          }
-                        >
-                          {playback.isPlaying ? "pause" : "play"}
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
-                          onClick={onEnded}
-                          title="Skip track"
-                        >
-                          skip ▶
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
+                              onClick={() =>
+                                playback.isPlaying
+                                  ? onPause(syncedPosition)
+                                  : onPlay(syncedPosition)
+                              }
+                            >
+                              {playback.isPlaying ? "pause" : "play"}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            {playback.isPlaying
+                              ? "Pause for everyone in the room"
+                              : "Resume playback for everyone"}
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="rounded bg-vaux-bg-dark border-vaux-green-dark border-1 px-3 py-2 text-xs text-vaux-light hover:bg-vaux-green-dark cursor-pointer"
+                              onClick={onEnded}
+                            >
+                              skip ▶
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            Skip to next track in queue
+                          </TooltipContent>
+                        </Tooltip>
                         <input
                           type="range"
                           min={0}
@@ -474,35 +517,58 @@ export function LobbyPage({
                       <span className="text-xs text-zinc-400">
                         {track.votes}
                       </span>
-                      <button
-                        onClick={() => onVote(track.id, -1)}
-                        disabled={track.votes < 1}
-                        title={
-                          track.votes < 1
-                            ? "You need at least 1 vote to downvote a track"
-                            : undefined
-                        }
-                        className="text-xs text-zinc-500 hover:text-[#C44545] cursor-pointer"
-                      >
-                        ▼
-                      </button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          {/* Wrap the button in a span so the tooltip still
+                              fires when the button is disabled (HTML disabled
+                              buttons swallow pointer events). */}
+                          <span className="inline-flex">
+                            <button
+                              onClick={() => onVote(track.id, -1)}
+                              disabled={track.votes < 1}
+                              className="text-xs text-zinc-500 hover:text-[#C44545] cursor-pointer disabled:cursor-not-allowed"
+                            >
+                              ▼
+                            </button>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="left">
+                          {track.votes < 1
+                            ? "Need at least 1 vote to downvote"
+                            : "Downvote — pushes track down the queue"}
+                        </TooltipContent>
+                      </Tooltip>
                     </div>
                     {isHost && (
                       <div className="ml-2 flex shrink-0 items-center gap-4">
-                        <button
-                          onClick={() => onRemoveFromQueue(track.id)}
-                          className="cursor-pointer text-xs text-zinc-500 transition-colors hover:text-[#C44545]"
-                          title="Remove from queue (host)"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                        <button
-                          onClick={() => onPlayTrack(track)}
-                          className="cursor-pointer text-xs font-bold text-vaux-green-dark transition-transform hover:scale-115 hover:text-[#A2CB8B]"
-                          title="Play now (host)"
-                        >
-                          <Play size={16} />
-                        </button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => onRemoveFromQueue(track.id)}
+                              className="cursor-pointer text-xs text-zinc-500 transition-colors hover:text-[#C44545]"
+                              aria-label="Remove from queue"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            Remove from queue (host only)
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              onClick={() => onPlayTrack(track)}
+                              className="cursor-pointer text-xs font-bold text-vaux-green-dark transition-transform hover:scale-115 hover:text-[#A2CB8B]"
+                              aria-label="Play now"
+                            >
+                              <Play size={16} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            Play this track now — replaces what&apos;s playing
+                          </TooltipContent>
+                        </Tooltip>
                       </div>
                     )}
                   </div>
