@@ -28,8 +28,11 @@ import {
   ChevronDownIcon,
   LogOut,
   Bug,
+  CircleHelp,
 } from "lucide-react";
 import { BUG_REPORT_URL } from "@/lib/links";
+import { HelpModal } from "@/components/HelpModal";
+import { hasSeenHelp, markHelpSeen } from "@/lib/help-storage";
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -118,6 +121,22 @@ export function LobbyPage({
   const [isSeeking, setIsSeeking] = useState(false);
   const [seekUi, setSeekUi] = useState(0);
   const [copiedRoom, setCopiedRoom] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // Auto-open the help modal the first time a user lands in a room. The
+  // 1500ms delay lets the player + queue + chat finish their initial render
+  // so the modal feels like an intentional welcome rather than a load-time
+  // flash. hasSeenHelp() biases to `true` in SSR / locked storage to avoid
+  // hydration flicker and to never spam users we can't record dismissal for.
+  useEffect(() => {
+    if (hasSeenHelp()) return;
+    const timer = setTimeout(() => setHelpOpen(true), 1500);
+    return () => clearTimeout(timer);
+  }, []);
+
+  function handleHelpOpenChange(open: boolean) {
+    setHelpOpen(open);
+    if (!open) markHelpSeen();
+  }
   // Force a re-render twice a second while playing so getSyncedPosition picks
   // up the new wall-clock time and the slider/now-playing labels advance
   // between server broadcasts. Paused or while-the-user-is-dragging: no tick,
@@ -130,11 +149,6 @@ export function LobbyPage({
   }, [playback.isPlaying, isSeeking]);
   const syncedPosition = getSyncedPosition(playback);
   const seekValue = isSeeking ? seekUi : syncedPosition;
-  // Range inputs have no built-in "filled" track on WebKit, so we paint one
-  // with a hard-stop linear-gradient driven by --vaux-progress. The CSS var
-  // is set inline per render; the gradient is declared once in the class
-  // list. The static bg-vaux-light/20 background-color sits behind the
-  // gradient and shows through past the stop, acting as the unfilled track.
   const seekMax = playback.duration > 0 ? playback.duration : 600;
   const seekPct = Math.min(100, Math.max(0, (seekValue / seekMax) * 100));
 
@@ -167,7 +181,9 @@ export function LobbyPage({
               vaux
             </button>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Leave room — back to lobby</TooltipContent>
+          <TooltipContent side="bottom">
+            Leave room — back to lobby
+          </TooltipContent>
         </Tooltip>
         <span className="shrink-0 text-zinc-600">/</span>
         <Tooltip>
@@ -193,6 +209,22 @@ export function LobbyPage({
         <span className="ml-auto min-w-0 truncate text-xs text-vaux-green-dark">
           {isHost ? "host" : "listener"} · {username}
         </span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              onClick={() => setHelpOpen(true)}
+              className="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-vaux-green-dark px-2.5 py-1 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+              aria-label="How to use vaux"
+            >
+              <CircleHelp className="size-3.5" aria-hidden />
+              <span className="hidden sm:inline">help</span>
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            How vaux works — quick reference
+          </TooltipContent>
+        </Tooltip>
         {BUG_REPORT_URL && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -633,6 +665,8 @@ export function LobbyPage({
           </div>
         </div>
       </div>
+
+      <HelpModal open={helpOpen} onOpenChange={handleHelpOpenChange} />
     </main>
   );
 }
