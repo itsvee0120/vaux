@@ -18,13 +18,14 @@ Layout (single screen):
 import asyncio
 import os
 import sys
-import shutil
 import json
 import socket
-import secrets
+import pyperclip
+from importlib.metadata import PackageNotFoundError, version
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.screen import ModalScreen
 from textual.widgets import (
     Header, Footer, Input, Button, Label, ListView,
     ListItem, Static, RichLog,
@@ -36,39 +37,9 @@ from vaux.socket_client import VauxSocket
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url
 from vaux.mpv import find_mpv
+from vaux.room_slug import generate_room_slug
 
 import subprocess
-
-
-# ── generateRoomSlug ──────────────────────────────────────────────────────
-# Same word lists and logic as the web client so slugs look consistent
-# across both interfaces. Uses secrets.randbelow for cryptographic quality.
-
-_ADJECTIVES = [
-    "amber", "arctic", "azure", "blazing", "crimson", "crystal", "drifting",
-    "echoing", "electric", "emerald", "floating", "frozen", "golden", "hollow",
-    "indigo", "jade", "lunar", "mystic", "neon", "obsidian", "onyx", "opal",
-    "phantom", "radiant", "rusty", "sacred", "silent", "silver", "solar",
-    "spectral", "stellar", "sunken", "twilight", "velvet", "vibrant", "violet",
-    "wandering", "wild", "winter", "wooden",
-]
-
-_NOUNS = [
-    "anchor", "bloom", "canyon", "circuit", "comet", "current", "dusk",
-    "ember", "forest", "harbor", "horizon", "lantern", "melody", "mirror",
-    "mosaic", "nebula", "ocean", "orbit", "petal", "prism", "pulse", "reef",
-    "relay", "ridge", "signal", "spark", "storm", "summit", "tide", "timber",
-    "tunnel", "valley", "vinyl", "vortex", "wave", "willow", "wind", "wraith",
-    "zenith", "zephyr",
-]
-
-def generate_room_slug() -> str:
-    adj    = _ADJECTIVES[secrets.randbelow(len(_ADJECTIVES))]
-    noun   = _NOUNS[secrets.randbelow(len(_NOUNS))]
-    suffix = 10 + secrets.randbelow(90)   # two-digit suffix, 10–99
-    return f"{adj}-{noun}-{suffix}"
-
-
 class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
@@ -123,8 +94,206 @@ class MPVPlayer:
 
 
 # ── LobbyApp ──────────────────────────────────────────────────────────────
-# Shown before VauxApp. Lets the user choose create or join, pick a name,
-# then hands off room_id + username to the caller via self.result.
+# Pre-join screen: create or join a room, then return room_id + username via self.result.
+
+LOBBY_TITLE = r"""____   _________   ____ _______  ___
+\   \ /   /  _  \ |    |   \   \/  /
+ \   Y   /  /_\  \|    |   /\     / 
+  \     /    |    \    |  / /     \ 
+   \___/\____|__  /______/ /___/\  \
+                \/               \_/"""
+
+try:
+    APP_VERSION = version("vaux-cli")
+except PackageNotFoundError:
+    APP_VERSION = "dev"
+
+APP_AUTHOR = "Violet Nguyen (Vee)"
+APP_WEBSITE = "https://itsvee0120.github.io/violet-website/"
+APP_GITHUB = "https://github.com/itsvee0120/vaux"
+APP_PYPI = "https://pypi.org/project/vaux-cli/"
+
+
+def _build_app_info(in_room: bool) -> str:
+    lines = [
+        "listen together, in sync",
+        "",
+        f"Version   {APP_VERSION}",
+        f"Author    {APP_AUTHOR}",
+        "",
+        "Links",
+        f"  Website  {APP_WEBSITE}",
+        f"  GitHub   {APP_GITHUB}",
+        f"  PyPI     {APP_PYPI}",
+    ]
+    if in_room:
+        lines.extend([
+            "",
+            "Shortcuts",
+            "  ctrl+s   search",
+            "  ctrl+t   chat",
+            "  ctrl+o   play / pause  (host)",
+            "  ctrl+n   skip track    (host)",
+            "  delete/x remove queue track (host, queue focused)",
+            "  ctrl+u   vote up",
+            "  ctrl+d   vote down",
+            "  - / =    volume down / up",
+            "  ctrl+g   this screen, hit esc to close",
+            "  ctrl+l   view listeners & transfer host (host)",
+            "  ctrl+c   quit",
+            "  type /host <username> to transfer host to another user",
+        ])
+    else:
+        lines.extend([
+            "",
+            "Shortcuts",
+            "  tab      next field",
+            "  ctrl+g   this screen, hit esc to close",
+            "  ctrl+c   quit",  
+        ])
+    return "\n".join(lines)
+
+
+class InfoModal(ModalScreen[None]):
+    """About screen: version, author, links, and key bindings."""
+
+    DEFAULT_CSS = """
+    InfoModal {
+        align: center middle;
+    }
+
+    #info-dialog {
+        width: 62;
+        height: auto;
+        max-height: 90%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #info-title {
+        text-align: center;
+        color: $success;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    #info-text {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #info-close {
+        width: 100%;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+    ]
+
+    def __init__(self, in_room: bool = False):
+        super().__init__()
+        self.in_room = in_room
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="info-dialog"):
+            yield Label("VAUX", id="info-title")
+            yield Static(_build_app_info(self.in_room), id="info-text")
+            yield Button("Close", id="info-close", variant="primary")
+
+    def action_dismiss(self) -> None:
+        self.dismiss()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "info-close":
+            self.dismiss()
+
+
+class ListenersModal(ModalScreen[None]):
+    """Host-only view of everyone in the room."""
+
+    DEFAULT_CSS = """
+    ListenersModal {
+        align: center middle;
+    }
+
+    #listeners-dialog {
+        width: 48;
+        height: auto;
+        max-height: 80%;
+        border: thick $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+
+    #listeners-title {
+        text-align: center;
+        color: $success;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    .listener-row {
+        height: 3;
+        margin-bottom: 1;
+    }
+
+    .listener-row Label {
+        width: 1fr;
+        content-align: left middle;
+    }
+
+    #listeners-close {
+        width: 100%;
+        margin-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss", "Close"),
+    ]
+
+    def __init__(self, members: list[dict], on_make_host):
+        super().__init__()
+        self.members = members
+        self.on_make_host = on_make_host
+
+    def compose(self) -> ComposeResult:
+        listeners = [m for m in self.members if m.get("role") != "host"]
+        host = next((m for m in self.members if m.get("role") == "host"), None)
+
+        with Vertical(id="listeners-dialog"):
+            yield Label("Listeners", id="listeners-title")
+            if host:
+                yield Label(f"⭐ {host['username']} (host)")
+            if not listeners:
+                yield Static("No listeners in the room yet.")
+            else:
+                for member in listeners:
+                    with Horizontal(classes="listener-row"):
+                        yield Label(member.get("username", member.get("userId", "?")))
+                        yield Button(
+                            "make host",
+                            id=f"host-{member['userId']}",
+                            variant="default",
+                        )
+            yield Button("Close", id="listeners-close", variant="primary")
+
+    def action_dismiss(self) -> None:
+        self.dismiss()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "listeners-close":
+            self.dismiss()
+        elif event.button.id.startswith("host-"):
+            user_id = event.button.id.removeprefix("host-")
+            asyncio.create_task(self._transfer_host(user_id))
+
+    async def _transfer_host(self, user_id: str) -> None:
+        await self.on_make_host(user_id)
+        self.dismiss()
+
 
 class LobbyApp(App):
     """Pre-game lobby: create a room (slug) or join an existing one."""
@@ -147,6 +316,8 @@ class LobbyApp(App):
         color: $success;
         text-style: bold;
         margin-bottom: 1;
+        height: auto;
+        width: 100%;
     }
 
     #slug-row {
@@ -168,6 +339,14 @@ class LobbyApp(App):
         margin-left: 1;
     }
 
+    #copy-btn {
+        width: auto;
+        min-width: 2;
+        max-width: 4;
+        margin-left: 1;
+        padding: 0;
+    }
+
     #mode-row {
         layout: horizontal;
         height: 3;
@@ -178,8 +357,20 @@ class LobbyApp(App):
         width: 1fr;
     }
 
-    #room-input {
+    #room-input-row {
+        layout: horizontal;
+        height: 3;
         margin-bottom: 1;
+        text-align: center;
+    }
+
+    #room-input {
+        width: 1fr;
+    }
+
+    #paste-btn {
+        width: 10;
+        margin-left: 1;
     }
 
     #username-input {
@@ -199,6 +390,7 @@ class LobbyApp(App):
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+g", "info", "Info", show=True),
         Binding("tab", "focus_next", "Next field", show=False),
     ]
 
@@ -212,23 +404,20 @@ class LobbyApp(App):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="card"):
-            yield Label("v a u x", id="title")
+            yield Label(LOBBY_TITLE, id="title")
 
-            # ── mode toggle ──
             with Horizontal(id="mode-row"):
                 yield Button("create room", id="create-btn", variant="success")
                 yield Button("join room",   id="join-btn",   variant="default")
 
-            # ── create: slug display + re-roll ──
             with Horizontal(id="slug-row"):
                 yield Label(self._slug, id="slug-display")
                 yield Button("↺ new", id="reroll-btn", variant="default")
+                yield Button("📋", id="copy-btn", variant="default")
 
-            # ── join: free-type input (hidden in create mode) ──
-            yield Input(
-                placeholder="room name (e.g. velvet-orbit-42)",
-                id="room-input",
-            )
+            with Horizontal(id="room-input-row"):
+                yield Input(placeholder="room name (e.g. velvet-orbit-42)", id="room-input")
+                yield Button("paste", id="paste-btn", variant="default")
 
             yield Input(placeholder="your name", id="username-input")
             yield Button("create & join →", id="go-btn", variant="success")
@@ -237,29 +426,35 @@ class LobbyApp(App):
         yield Footer()
 
     def on_mount(self):
-        # Start in create mode — hide the join input
         self._apply_mode()
 
     def _apply_mode(self):
         slug_row   = self.query_one("#slug-row")
+        room_input_row = self.query_one("#room-input-row")
         room_input = self.query_one("#room-input", Input)
         go_btn     = self.query_one("#go-btn", Button)
         hint       = self.query_one("#hint", Label)
         create_btn = self.query_one("#create-btn", Button)
         join_btn   = self.query_one("#join-btn", Button)
+        copy_btn   = self.query_one("#copy-btn", Button)
+        paste_btn  = self.query_one("#paste-btn", Button)
 
         if self._mode == "create":
             slug_row.display   = True
-            room_input.display = False
+            room_input_row.display = False
+            copy_btn.display   = True
+            paste_btn.display  = False
             go_btn.label       = "create & join →"
-            hint.update("")
+            hint.update("Copy the room name to share with others 📋")
             create_btn.variant = "success"
             join_btn.variant   = "default"
         else:
             slug_row.display   = False
-            room_input.display = True
+            room_input_row.display = True
+            copy_btn.display   = False
+            paste_btn.display  = True
             go_btn.label       = "join room →"
-            hint.update("ask the host for their room name")
+            hint.update("Ask the host for their room name")
             create_btn.variant = "default"
             join_btn.variant   = "success"
             room_input.focus()
@@ -276,15 +471,31 @@ class LobbyApp(App):
             self._apply_mode()
 
         elif btn_id == "reroll-btn":
-            # Generate a fresh slug and update the display
             self._slug = generate_room_slug()
             self.query_one("#slug-display", Label).update(self._slug)
 
         elif btn_id == "go-btn":
             self._submit()
 
+        elif btn_id == "copy-btn":
+            self._copy_slug()
+
+        elif btn_id == "paste-btn":
+            self._paste_slug()
+
+    def _copy_slug(self):
+        pyperclip.copy(self._slug)
+        self.query_one("#hint", Label).update("Copied to clipboard!")
+
+    def _paste_slug(self):
+        try:
+            text = pyperclip.paste().strip()
+        except pyperclip.PyperclipException:
+            return
+        if text:
+            self.query_one("#room-input", Input).value = text
+
     def on_input_submitted(self, event: Input.Submitted):
-        # Enter in any field submits the form
         self._submit()
 
     def _submit(self):
@@ -306,6 +517,9 @@ class LobbyApp(App):
 
         self.result = (room_id, username)
         self.exit()
+
+    def action_info(self) -> None:
+        self.push_screen(InfoModal(in_room=False))
 
 
 # ── NowPlaying widget ──────────────────────────────────────────────────────
@@ -339,18 +553,45 @@ class NowPlaying(Static):
 
 # ── QueueItem widget ───────────────────────────────────────────────────────
 class QueueItem(ListItem):
+    """Single queue row; host rows show a red x hint separated from the edge."""
+
+    DEFAULT_CSS = """
+    QueueItem {
+        layout: horizontal;
+        height: 1;
+        padding: 0 1;
+        align: left middle;
+    }
+
+    QueueItem > .queue-item-label {
+        width: 1fr;
+        content-align: left middle;
+    }
+
+    QueueItem > .queue-remove-hint {
+        width: 3;
+        min-width: 3;
+        margin-left: 1;
+        margin-right: 2;
+        content-align: center middle;
+        color: #C44545;
+        text-style: bold;
+    }
+    """
+
     def __init__(self, item: dict, is_host: bool):
         super().__init__()
         self._item = item
         self._is_host = is_host
 
     def compose(self) -> ComposeResult:
-        title = (self._item.get("title") or "")[:40]
+        title = (self._item.get("title") or "")[:26]
         votes = self._item.get("votes", 0)
         added_by = self._item.get("addedBy", "")
         vote_str = f"+{votes}" if votes >= 0 else str(votes)
-        host_marker = " [host ▶]" if self._is_host else ""
-        yield Label(f"{vote_str}  {title}  — {added_by}{host_marker}")
+        yield Label(f"{vote_str}  {title}  — {added_by}", classes="queue-item-label")
+        if self._is_host:
+            yield Static("x", classes="queue-remove-hint")
 
 
 # ── SearchResultItem widget ────────────────────────────────────────────────
@@ -360,14 +601,15 @@ class SearchResultItem(ListItem):
         self.result = result
 
     def compose(self) -> ComposeResult:
-        title = result.title[:50] if (result := self.result) else ""
-        channel = self.result.channel
+        result = self.result
+        title = result.title[:50] if result else ""
+        channel = result.channel if result else ""
         yield Label(f"  {title}  [{channel}]")
 
 
 # ── VauxApp ────────────────────────────────────────────────────────────────
 class VauxApp(App):
-    theme = "dracula"  # Built-in themes: dracula, nord, monokai, tokyo-night, textual-dark
+    theme = "dracula"
 
     CSS = """
     Screen {
@@ -442,12 +684,16 @@ class VauxApp(App):
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
+        Binding("ctrl+g", "info", "Info", show=True),
+        Binding("ctrl+l", "show_listeners", "Listeners", show=True),
         Binding("ctrl+s", "focus_search", "Search", show=True),
         Binding("ctrl+t", "focus_chat", "Chat", show=True),
         Binding("ctrl+u", "vote_up", "Vote ▲", show=False),
         Binding("ctrl+d", "vote_down", "Vote ▼", show=False),
         Binding("ctrl+o", "toggle_playback", "Play/Pause", show=True),
         Binding("ctrl+n", "skip_track", "Skip ▶", show=True),
+        Binding("x", "remove_queue_item", "Remove", show=True),
+        Binding("delete", "remove_queue_item", "Remove", show=False),
         Binding("-", "volume_down", "Vol -", show=True),
         Binding("=", "volume_up", "Vol +", show=True),
     ]
@@ -537,17 +783,27 @@ class VauxApp(App):
             self._post_system("mpv not found on system. Please install mpv to hear audio.")
 
     async def _on_member_joined(self, data: dict):
+        user_id = data.get("userId")
         uname = data.get("username", "?")
-        self._post_system(f"{uname} joined")
+        if user_id and not any(m.get("userId") == user_id for m in self.members):
+            self.members.append(
+                {"userId": user_id, "username": uname, "role": "listener"},
+            )
+            self._post_system(f"{uname} joined")
 
     async def _on_member_left(self, data: dict):
         uid = data.get("userId", "?")
-        self._post_system(f"{uid} left")
+        left = next((m for m in self.members if m.get("userId") == uid), None)
+        self.members = [m for m in self.members if m.get("userId") != uid]
+        name = left.get("username", uid) if left else uid
+        self._post_system(f"{name} left")
 
     async def _on_host_changed(self, data: dict):
         new_host_id = data.get("newHostId")
         self.is_host = new_host_id == self.username
         self.role = "host" if self.is_host else "listener"
+        for member in self.members:
+            member["role"] = "host" if member.get("userId") == new_host_id else "listener"
         new_name = data.get("newHostUsername", new_host_id)
         self._post_system(f"⭐ {new_name} is now host")
         await self._refresh_queue()
@@ -595,15 +851,12 @@ class VauxApp(App):
 
     def _check_player_status(self):
         """Polls the mpv process to auto-skip when a track ends naturally or crashes."""
-        # Only the host is responsible for advancing the queue
-        if not self.is_host or not getattr(self, "playback", None) or not self.playback.is_playing:
+        if not self.is_host or not self.playback.is_playing:
             return
-            
-        if getattr(self, "player", None) and self.player.proc:
-            if self.player.proc.poll() is not None:
-                self.player.proc = None
-                self.player_running = False
-                asyncio.create_task(self._trigger_ended())
+        if self.player and self.player.proc and self.player.proc.poll() is not None:
+            self.player.proc = None
+            self.player_running = False
+            asyncio.create_task(self._trigger_ended())
 
     async def _apply_playback(self):
         """Syncs the python-mpv player instance with the server playback state."""
@@ -617,13 +870,15 @@ class VauxApp(App):
             self.player_running = False
             return
             
-        # Needs to play/resume if it's a new track OR it was paused locally
         needs_play = s.is_playing and (s.video_id != self.last_video_id or not self.player_running)
 
         if needs_play:
             stream_url = self.stream_cache.get(s.video_id)
+            stream_error: str | None = None
             if not stream_url:
-                stream_url = await get_stream_url(self.server_url, s.video_id)
+                stream_url, stream_error = await get_stream_url(
+                    self.server_url, s.video_id
+                )
                 if stream_url:
                     self.stream_cache[s.video_id] = stream_url
 
@@ -633,8 +888,10 @@ class VauxApp(App):
                 self.last_video_id = s.video_id
                 self.player_running = True
             else:
-                self._post_system("Failed to load stream for track.")
-                await self._trigger_ended()
+                detail = f" {stream_error}" if stream_error else ""
+                self._post_system(f"Failed to load stream for track.{detail}")
+                if self.is_host:
+                    await self._trigger_ended()
 
         elif not s.is_playing and self.player_running:
             self.player.stop()
@@ -647,9 +904,10 @@ class VauxApp(App):
 
     # ── button handlers ────────────────────────────────────────────────────
     async def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "search-btn":
+        btn_id = event.button.id or ""
+        if btn_id == "search-btn":
             await self._do_search()
-        elif event.button.id == "chat-btn":
+        elif btn_id == "chat-btn":
             await self._do_send_chat()
 
     async def on_input_submitted(self, event: Input.Submitted):
@@ -677,7 +935,6 @@ class VauxApp(App):
         if not text:
             return
             
-        # Intercept /host command to transfer host privileges
         if text.startswith("/host "):
             if not self.is_host:
                 self._post_system("Only the host can transfer privileges.")
@@ -695,7 +952,6 @@ class VauxApp(App):
         lv_id = event.list_view.id
 
         if lv_id == "search-results":
-            # add selected result to queue
             idx = event.list_view.index
             if idx is not None and idx < len(self.search_results):
                 r = self.search_results[idx]
@@ -705,7 +961,6 @@ class VauxApp(App):
                 self._post_system(f"added: {r.title[:40]}")
 
         elif lv_id == "queue-list" and self.is_host:
-            # host pressing enter on a queue item plays it immediately
             idx = event.list_view.index
             if idx is not None and idx < len(self.queue):
                 item = self.queue[idx]
@@ -752,6 +1007,28 @@ class VauxApp(App):
             self._post_system("Skipped track.")
             await self._trigger_ended()
 
+    def _focused_in_queue(self) -> bool:
+        lv = self.query_one("#queue-list", ListView)
+        widget = self.focused
+        while widget is not None:
+            if widget is lv:
+                return True
+            widget = widget.parent
+        return False
+
+    async def action_remove_queue_item(self):
+        if not self.is_host:
+            self._post_system("Only the host can remove tracks.")
+            return
+        if not self._focused_in_queue():
+            return
+        lv = self.query_one("#queue-list", ListView)
+        idx = lv.index
+        if idx is not None and idx < len(self.queue):
+            item = self.queue[idx]
+            await self.socket.remove_from_queue(self.room_id, item["id"])
+            self._post_system(f"removed: {item.get('title', '')[:40]}")
+
     def action_volume_down(self):
         self.volume = max(0, self.volume - 10)
         if getattr(self, "player", None):
@@ -763,3 +1040,15 @@ class VauxApp(App):
         if getattr(self, "player", None):
             self.player.set_volume(self.volume)
         self._post_system(f"Volume: {self.volume}%")
+
+    def action_info(self) -> None:
+        self.push_screen(InfoModal(in_room=True))
+
+    def action_show_listeners(self) -> None:
+        if not self.is_host:
+            self._post_system("Only the host can view the listener list.")
+            return
+        self.push_screen(ListenersModal(self.members, self._transfer_host_from_modal))
+
+    async def _transfer_host_from_modal(self, user_id: str) -> None:
+        await self.socket.transfer_host(self.room_id, user_id)

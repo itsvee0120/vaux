@@ -9,6 +9,11 @@ const path = require("path");
 const YTDlpWrap = require("yt-dlp-wrap").default || require("yt-dlp-wrap");
 let ytdlp = new YTDlpWrap();
 
+/** Modern YouTube extraction needs a JS runtime and EJS challenge scripts. */
+function ytdlpBaseArgs() {
+  return ["--js-runtimes", "node", "--remote-components", "ejs:github"];
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -42,7 +47,9 @@ app.get("/health", (req, res) => {
 // ─────────────────────────────
 // API PROTECTION MIDDLEWARE
 // ─────────────────────────────
-const API_KEY = process.env.API_KEY || "vaux-02187xdsx-4335";
+// Public dev gate for /youtube routes — not a secret; blocks casual bot scans.
+const DEFAULT_API_KEY = "vaux-02187xdsx-4335";
+const API_KEY = process.env.API_KEY || DEFAULT_API_KEY;
 
 app.use("/youtube", (req, res, next) => {
   if (req.headers["x-api-key"] !== API_KEY) {
@@ -61,6 +68,7 @@ app.get("/youtube/search", async (req, res) => {
   try {
     const stdout = await ytdlp.execPromise([
       `ytsearch8:${q}`,
+      ...ytdlpBaseArgs(),
       "--dump-single-json",
       "--flat-playlist",
       "--no-warnings",
@@ -82,6 +90,41 @@ app.get("/youtube/search", async (req, res) => {
     res.json({ results });
   } catch (err) {
     console.error("[youtube] search error:", err);
+    res.status(500).json({ error: "internal server error" });
+  }
+});
+
+async function resolveStreamUrl(videoId) {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+  try {
+    const stdout = await ytdlp.execPromise([
+      watchUrl,
+      ...ytdlpBaseArgs(),
+      "--get-url",
+      "--no-warnings",
+      "-f",
+      "bestaudio/best",
+    ]);
+    return stdout.trim().split(/\r?\n/).find(Boolean) || null;
+  } catch (err) {
+    console.warn("[youtube] stream extraction failed:", err.message || err);
+    return null;
+  }
+}
+
+app.get("/youtube/stream", async (req, res) => {
+  const { videoId } = req.query;
+  if (!videoId) return res.status(400).json({ error: "videoId required" });
+
+  try {
+    const url = await resolveStreamUrl(videoId);
+    if (!url) {
+      return res.status(500).json({ error: "could not resolve stream" });
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error("[youtube] stream error:", err);
     res.status(500).json({ error: "internal server error" });
   }
 });
@@ -239,14 +282,29 @@ io.on("connection", (socket) => {
     const item = room.queue.find((i) => i.id === itemId);
     if (!item) return;
 
-    item.votes += value;
+    const delta = value > 0 ? 1 : -1;
+    if (delta === -1 && item.votes < 1) return;
+    item.votes += delta;
     room.queue.sort((a, b) => b.votes - a.votes);
 
     io.to(roomId).emit("queue:updated", { queue: room.queue });
   });
 
+  socket.on("queue:remove", ({ roomId, itemId }) => {
+    const room = getRoom(roomId);
+    if (!isHost(socket, room)) return;
+
+    const idx = room.queue.findIndex((i) => i.id === itemId);
+    if (idx === -1) return;
+
+    room.queue.splice(idx, 1);
+    io.to(roomId).emit("queue:updated", { queue: room.queue });
+  });
+
   // ── CHAT ──
   socket.on("chat:send", ({ roomId, userId, username, text }) => {
+    if (!text || text.length > 500) return;
+
     io.to(roomId).emit("chat:message", {
       userId,
       username,

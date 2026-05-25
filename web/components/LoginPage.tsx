@@ -1,117 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { LoginBackground } from "@/components/LoginBackground";
-
-// ── generateRoomSlug ──
-// Generates a memorable 3-part phrase: adjective-noun-number
-// e.g. "velvet-orbit-42", "cosmic-tide-17"
-// Uses crypto.getRandomValues for uniform distribution across 144,000 possible slugs.
-const ADJECTIVES = [
-  "amber",
-  "arctic",
-  "azure",
-  "blazing",
-  "crimson",
-  "crystal",
-  "drifting",
-  "echoing",
-  "electric",
-  "emerald",
-  "floating",
-  "frozen",
-  "golden",
-  "hollow",
-  "indigo",
-  "jade",
-  "lunar",
-  "mystic",
-  "neon",
-  "obsidian",
-  "onyx",
-  "opal",
-  "phantom",
-  "radiant",
-  "rusty",
-  "sacred",
-  "silent",
-  "silver",
-  "solar",
-  "spectral",
-  "stellar",
-  "sunken",
-  "twilight",
-  "velvet",
-  "vibrant",
-  "violet",
-  "wandering",
-  "wild",
-  "winter",
-  "wooden",
-];
-
-const NOUNS = [
-  "anchor",
-  "bloom",
-  "canyon",
-  "circuit",
-  "comet",
-  "current",
-  "dusk",
-  "ember",
-  "forest",
-  "harbor",
-  "horizon",
-  "lantern",
-  "melody",
-  "mirror",
-  "mosaic",
-  "nebula",
-  "ocean",
-  "orbit",
-  "petal",
-  "prism",
-  "pulse",
-  "reef",
-  "relay",
-  "ridge",
-  "signal",
-  "spark",
-  "storm",
-  "summit",
-  "tide",
-  "timber",
-  "tunnel",
-  "valley",
-  "vinyl",
-  "vortex",
-  "wave",
-  "willow",
-  "wind",
-  "wraith",
-  "zenith",
-  "zephyr",
-];
-
-function generateRoomSlug(): string {
-  // crypto.getRandomValues gives better entropy than Math.random
-  const buf = new Uint32Array(3);
-  crypto.getRandomValues(buf);
-
-  const adj = ADJECTIVES[buf[0] % ADJECTIVES.length];
-  const noun = NOUNS[buf[1] % NOUNS.length];
-  // Two-digit suffix (10–99) multiplies the space 90x without hurting readability
-  const suffix = 10 + (buf[2] % 90);
-
-  return `${adj}-${noun}-${suffix}`;
-}
+import { generateRoomSlug } from "@/lib/room-slug";
 
 type LoginPageProps = {
   roomId: string;
   username: string;
   onRoomIdChange: (value: string) => void;
   onUsernameChange: (value: string) => void;
-  onJoin: () => void;
+  onJoin: (roomIdOverride?: string) => void;
 };
 
 export function LoginPage({
@@ -121,21 +19,13 @@ export function LoginPage({
   onUsernameChange,
   onJoin,
 }: LoginPageProps) {
-  // Track which tab the user is on — "create" generates a slug, "join" is free-type
   const [mode, setMode] = useState<"create" | "join">("create");
 
-  // Slug is generated client-side only to avoid SSR hydration mismatches.
-  const [generatedSlug, setGeneratedSlug] = useState("");
-
-  useEffect(() => {
-    if (mode !== "create" || generatedSlug) return;
-    const slug = roomId.trim() || generateRoomSlug();
-    setGeneratedSlug(slug);
-    if (!roomId.trim()) onRoomIdChange(slug);
-  }, [mode, roomId, generatedSlug, onRoomIdChange]);
+  const [generatedSlug, setGeneratedSlug] = useState(
+    () => roomId.trim() || generateRoomSlug(),
+  );
 
   function handleCreate() {
-    // Generate a fresh slug, sync it both locally and up to the parent
     const slug = generateRoomSlug();
     setGeneratedSlug(slug);
     onRoomIdChange(slug);
@@ -143,13 +33,11 @@ export function LoginPage({
   }
 
   function handleSwitchToJoin() {
-    // Clear the parent's roomId so the join input starts empty
     onRoomIdChange("");
     setMode("join");
   }
 
   function handleSwitchToCreate() {
-    // Re-generate when switching back so they always get a fresh one
     const slug = generateRoomSlug();
     setGeneratedSlug(slug);
     onRoomIdChange(slug);
@@ -171,7 +59,6 @@ export function LoginPage({
             </p>
           </header>
 
-          {/* ── mode toggle ── */}
           <div className="flex rounded-2xl border border-zinc-700 p-1 gap-1">
             <button
               type="button"
@@ -201,11 +88,15 @@ export function LoginPage({
             className="flex flex-col gap-3 sm:gap-4"
             onSubmit={(e) => {
               e.preventDefault();
-              onJoin();
+              const effectiveRoomId =
+                mode === "create" ? roomId.trim() || generatedSlug : roomId.trim();
+              if (mode === "create" && effectiveRoomId !== roomId) {
+                onRoomIdChange(effectiveRoomId);
+              }
+              onJoin(effectiveRoomId);
             }}
           >
             {mode === "create" ? (
-              // ── create mode: show generated slug with a re-roll button ──
               <div className="flex items-center gap-2 rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3">
                 <span className="flex-1 truncate text-base text-vaux-green sm:text-sm">
                   {generatedSlug || "…"}
@@ -220,7 +111,6 @@ export function LoginPage({
                 </button>
               </div>
             ) : (
-              // ── join mode: free-type the room name a host shared ──
               <input
                 className="w-full rounded-2xl border border-zinc-700 bg-vaux-bg/90 px-3 py-3 text-base focus:border-vaux-green focus:outline-none sm:text-sm"
                 placeholder="room name (e.g. velvet-orbit-42)"
@@ -247,7 +137,6 @@ export function LoginPage({
             </button>
           </form>
 
-          {/* ── hint so joiners know what to ask the host for ── */}
           {mode === "join" && (
             <p className="text-center text-xs text-zinc-600">
               ask the host for their room name
@@ -267,6 +156,26 @@ export function LoginPage({
             className="underline hover:text-vaux-green"
           >
             Vee
+          </a>
+        </span>
+        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute left-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
+          <a
+            href="https://github.com/itsvee0120/vaux"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            Vaux on Github
+          </a>
+        </span>
+        <span className="rounded-xl bg-vaux-bg px-3 py-1.5 text-xs text-zinc-400 sm:text-zinc-500 absolute right-5 hover:bg-vaux-green hover:text-black hover:font-bold cursor-pointer">
+          <a
+            href="https://pypi.org/project/vaux-cli/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            Vaux on CLI
           </a>
         </span>
       </footer>

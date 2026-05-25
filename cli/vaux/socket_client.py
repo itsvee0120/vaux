@@ -18,8 +18,10 @@ class VauxSocket:
 
     # ── public event registration ──────────────────────────────────────────
     def on(self, event: str, handler: Callable):
-        self._handlers.setdefault(event, []).append(handler)
-        self.sio.on(event, self._make_dispatcher(event))
+        if event not in self._handlers:
+            self._handlers[event] = []
+            self.sio.on(event, self._make_dispatcher(event))
+        self._handlers[event].append(handler)
 
     def _make_dispatcher(self, event: str):
         async def dispatch(*args):
@@ -33,7 +35,7 @@ class VauxSocket:
 
     # ── connection ─────────────────────────────────────────────────────────
     async def connect(self):
-        await self.sio.connect(self.server_url, transports=["polling", "websocket"])
+        await self.sio.connect(self.server_url, transports=["websocket", "polling"])
 
     async def disconnect(self):
         await self.sio.disconnect()
@@ -69,6 +71,12 @@ class VauxSocket:
             "roomId": room_id,
             "itemId": item_id,
             "value": value,
+        })
+
+    async def remove_from_queue(self, room_id: str, item_id: str):
+        await self.sio.emit("queue:remove", {
+            "roomId": room_id,
+            "itemId": item_id,
         })
 
     async def play(self, room_id: str, position_seconds: float):

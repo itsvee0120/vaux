@@ -21,9 +21,9 @@ import {
 } from "@/lib/session";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
-
-/** Must match server `API_KEY` / CLI `VAUX_API_KEY` default when env is unset. */
+// Public dev gate — matches server DEFAULT_API_KEY; override via NEXT_PUBLIC_API_KEY.
 const DEFAULT_API_KEY = "vaux-02187xdsx-4335";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY || DEFAULT_API_KEY;
 
 function joinSocketRoom(roomId: string, username: string) {
   const socket = getSocket();
@@ -115,14 +115,17 @@ export default function Home() {
     });
 
     socket.on("room:member_left", ({ userId }) => {
-      setMembers((prev) => prev.filter((m) => m.userId !== userId));
-      setMessages((p) => [
-        ...p,
-        { username: "", text: `${userId} left`, system: true },
-      ]);
+      setMembers((prev) => {
+        const name = prev.find((m) => m.userId === userId)?.username ?? userId;
+        setMessages((p) => [
+          ...p,
+          { username: "", text: `${name} left`, system: true },
+        ]);
+        return prev.filter((m) => m.userId !== userId);
+      });
     });
 
-    socket.on("host:changed", ({ newHostId }) => {
+    socket.on("host:changed", ({ newHostId, newHostUsername }) => {
       setIsHost(newHostId === usernameRef.current);
       setMembers((prev) =>
         prev.map((m) => ({
@@ -130,6 +133,11 @@ export default function Home() {
           role: m.userId === newHostId ? "host" : "listener",
         })),
       );
+      const name = newHostUsername ?? newHostId;
+      setMessages((p) => [
+        ...p,
+        { username: "", text: `⭐ ${name} is now host`, system: true },
+      ]);
     });
 
     socket.on("queue:updated", ({ queue }) => setQueue(queue));
@@ -191,8 +199,8 @@ export default function Home() {
     getSocket().emit("playback:ended", { roomId });
   }, [roomId]);
 
-  function joinRoom() {
-    const rid = roomId.trim();
+  function joinRoom(roomIdOverride?: string) {
+    const rid = (roomIdOverride ?? roomId).trim();
     const user = username.trim();
     if (!rid || !user) return;
 
@@ -212,7 +220,7 @@ export default function Home() {
       `${SERVER}/youtube/search?q=${encodeURIComponent(searchQuery)}`,
       {
         headers: {
-          "x-api-key": process.env.NEXT_PUBLIC_API_KEY || DEFAULT_API_KEY,
+          "x-api-key": API_KEY,
         },
       },
     );
@@ -236,6 +244,11 @@ export default function Home() {
   function playTrack(track: Track) {
     if (!isHost) return;
     getSocket().emit("playback:play_track", { roomId, itemId: track.id });
+  }
+
+  function removeFromQueue(itemId: string) {
+    if (!isHost) return;
+    getSocket().emit("queue:remove", { roomId, itemId });
   }
 
   function sendChat() {
@@ -316,6 +329,7 @@ export default function Home() {
       onAddToQueue={addToQueue}
       onVote={vote}
       onPlayTrack={playTrack}
+      onRemoveFromQueue={removeFromQueue}
       onSendChat={sendChat}
       onPlay={emitPlay}
       onPause={emitPause}
