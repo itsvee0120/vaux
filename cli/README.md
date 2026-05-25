@@ -68,29 +68,45 @@ vaux --server http://localhost:4000 my-room -u yourname
 
 ## Keyboard shortcuts
 
-| Key         | Action                                  |
-| ----------- | --------------------------------------- |
-| `Ctrl+S`    | Focus search                            |
-| `Ctrl+T`    | Focus chat                              |
-| `Ctrl+O`    | Play / pause (host)                     |
-| `Ctrl+N`    | Skip track (host)                       |
-| `x` / `Del` | Remove queue item (host, queue focused) |
-| `Ctrl+U`    | Vote up selected track                  |
-| `Ctrl+D`    | Vote down selected track                |
-| `Ctrl+G`    | Info (version, links, shortcuts)        |
-| `Ctrl+L`    | Listeners & transfer host (host)        |
-| `Ctrl+B`    | Report a bug (Google Form / GitHub)     |
-| `Ctrl+P`    | Command palette (save screenshot, etc.) |
-| `-` / `=`   | Volume down / up                        |
-| `Ctrl+C`    | Quit                                    |
+### In a room
 
-## Host transfer
+| Key         | Action                                       |
+| ----------- | -------------------------------------------- |
+| `Ctrl+S`    | Focus search                                 |
+| `Ctrl+R`    | Clear search results                         |
+| `Ctrl+T`    | Focus chat                                   |
+| `↑` / `↓`   | Chat history (chat input focused)            |
+| `Ctrl+O`    | Play / pause (host)                          |
+| `Ctrl+N`    | Skip track (host)                            |
+| `x` / `Del` | Remove queue item (host, queue focused)      |
+| `Ctrl+U`    | Vote up selected track                       |
+| `Ctrl+D`    | Vote down selected track                     |
+| `-` / `=`   | Volume down / up                             |
+| `m`         | Mute / unmute                                |
+| `Ctrl+K`    | Copy room name to clipboard                  |
+| `Ctrl+L`    | Listeners & transfer host (host)             |
+| `Ctrl+G`    | Info (version, links, shortcuts)             |
+| `Ctrl+B`    | Report a bug (Google Form / GitHub)          |
+| `Ctrl+P`    | Command palette (save screenshot, etc.)      |
+| `Ctrl+C`    | Quit                                         |
 
-Transfer host from chat:
+Type `/host <username>` in chat to transfer host to another listener.
 
-```
-/host username
-```
+### Lobby
+
+| Key      | Action                                  |
+| -------- | --------------------------------------- |
+| `Tab`    | Next field                              |
+| `Ctrl+G` | Info (version, links, shortcuts)        |
+| `Ctrl+B` | Report a bug (Google Form / GitHub)     |
+| `Ctrl+P` | Command palette (save screenshot, etc.) |
+| `Ctrl+C` | Quit                                    |
+
+### Modal overlays
+
+| Key     | Action                                              |
+| ------- | --------------------------------------------------- |
+| `Esc`   | Close current overlay (Info / Bug / Listeners)      |
 
 ## Streaming notes
 

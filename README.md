@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/ae3808a2-98e7-4c24-af91-6adc98b5a966
 - Vote tracks up or down — the queue re-sorts in real time for everyone
 - Synchronized playback — everyone in the room hears the same track at the same timestamp
 - Host controls: Play, pause, seek, skip tracks, and transfer host privileges
-- Live chat and emoji reactions alongside the music
+- Live chat alongside the music
 - Local volume controls for all users (Web and CLI)
 
 ---
@@ -67,26 +67,51 @@ vaux/
 
 ## Socket.io event contract
 
-| Event                  | Direction       | Payload                                                        |
-| ---------------------- | --------------- | -------------------------------------------------------------- |
-| `room:join`            | Client → Server | `{ roomId, userId, username }`                                 |
-| `room:joined`          | Server → Client | `{ room, members[], queue[], playbackState, role }`            |
-| `room:member_joined`   | Server → Client | `{ userId, username, role }`                                   |
-| `room:member_left`     | Server → Client | `{ userId }`                                                   |
-| `queue:add`            | Client → Server | `{ roomId, videoId, title, thumbnailUrl, durationSeconds }`    |
-| `queue:remove`         | Client → Server | `{ roomId, itemId }` — host only                               |
-| `queue:updated`        | Server → Client | `{ queue[] }` — full queue, sorted by votes                    |
-| `queue:vote`           | Client → Server | `{ roomId, queueItemId, value }` — `1` or `-1`                 |
-| `playback:play_track`  | Client → Server | `{ roomId, itemId }` — host only; starts queue item            |
-| `playback:play`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
-| `playback:pause`       | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
-| `playback:seek`        | Client → Server | `{ roomId, positionSeconds }` — host/DJ only                   |
-| `playback:state`       | Server → Client | `{ videoId, positionSeconds, isPlaying, updatedAt, ...track }` |
-| `playback:ended`       | Client → Server | `{ roomId }` — host only; auto-plays next queue item           |
-| `playback:track_ended` | Server → Client | `{ nextItem \| null }`                                         |
-| `chat:send`            | Client → Server | `{ roomId, userId, username, text }`                           |
-| `chat:message`         | Server → Client | `{ userId, username, text, timestamp }`                        |
-| `reaction:send`        | Client → Server | `{ roomId, emoji }`                                            |
+Identity note: `userId` is assigned by the server on socket connection and stamped onto every chat/queue message server-side. Clients never send or override `userId` — anything they pass is discarded.
+
+### Rooms
+
+| Event                | Direction       | Payload                                                              |
+| -------------------- | --------------- | -------------------------------------------------------------------- |
+| `room:join`          | Client → Server | `{ roomId, username }`                                               |
+| `room:joined`        | Server → Client | `{ room: { id }, userId, members[], queue[], playbackState, role }` |
+| `room:member_joined` | Server → Client | `{ userId, username }`                                               |
+| `room:member_left`   | Server → Client | `{ userId }`                                                         |
+| `room:join_failed`   | Server → Client | `{ reason }` — server at capacity, room full, etc.                   |
+| `host:transfer`      | Client → Server | `{ roomId, newHostId }` — host only                                  |
+| `host:changed`       | Server → Client | `{ newHostId, newHostUsername }`                                     |
+
+### Queue
+
+| Event           | Direction       | Payload                                                  |
+| --------------- | --------------- | -------------------------------------------------------- |
+| `queue:add`     | Client → Server | `{ roomId, videoId, title, channel, duration }`         |
+| `queue:vote`    | Client → Server | `{ roomId, itemId, value }` — `1` or `-1`                |
+| `queue:remove`  | Client → Server | `{ roomId, itemId }` — host only                         |
+| `queue:updated` | Server → Client | `{ queue[] }` — full queue, sorted by votes              |
+| `queue:full`    | Server → Client | `{ max }` — emitted when room queue hits its hard cap    |
+
+Note: `queue:add` thumbnails are server-derived from `videoId`. Any client-supplied thumbnail URL is discarded to prevent tracking-pixel leaks.
+
+### Playback (host only)
+
+| Event                  | Direction       | Payload                                          |
+| ---------------------- | --------------- | ------------------------------------------------ |
+| `playback:play_track`  | Client → Server | `{ roomId, itemId }` — pops the queue item       |
+| `playback:play`        | Client → Server | `{ roomId, positionSeconds }`                    |
+| `playback:pause`       | Client → Server | `{ roomId, positionSeconds }`                    |
+| `playback:seek`        | Client → Server | `{ roomId, positionSeconds }`                    |
+| `playback:ended`       | Client → Server | `{ roomId }` — auto-plays next queue item        |
+| `playback:state`       | Server → Client | `{ videoId, title, channel, thumbnail, trackId, duration, positionSeconds, isPlaying, updatedAt }` |
+| `playback:track_ended` | Server → Client | `{ nextItem \| null }`                           |
+
+### Chat
+
+| Event               | Direction       | Payload                                                      |
+| ------------------- | --------------- | ------------------------------------------------------------ |
+| `chat:send`         | Client → Server | `{ roomId, text }` — identity stamped server-side            |
+| `chat:message`      | Server → Client | `{ userId, username, text, timestamp }`                      |
+| `chat:rate_limited` | Server → Client | `{ retryAfterMs }` — sent only to the throttled socket       |
 
 ### Sync formula
 
@@ -104,7 +129,7 @@ currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 | Layer        | Technology                                                                    |
 | ------------ | ----------------------------------------------------------------------------- |
 | Web frontend | Next.js 16, React, Tailwind CSS, TypeScript                                   |
-| CLI frontend | Python 3.12, textual, python-socketio                                         |
+| CLI frontend | Python 3.11+, textual, python-socketio                                        |
 | Backend      | Node.js, Express, Socket.io                                                   |
 | Database     | In-memory (Currently)                                                         |
 | Music source | `yt-dlp` + Node.js (server search & stream extraction), YouTube IFrame API (web), `mpv` (CLI) |
@@ -144,21 +169,27 @@ Or bypass the lobby to join a room directly:
 vaux <room-id> -u <your-name>
 ```
 
-## Keyboard Shortcuts
+## Keyboard shortcuts (CLI)
 
-| Key         | Action                              |
-| ----------- | ----------------------------------- |
-| `Ctrl+S`    | Focus Search                        |
-| `Ctrl+T`    | Focus Chat                          |
-| `Ctrl+O`    | Play / Pause (Host only)            |
-| `Ctrl+N`    | Skip Track (Host only)              |
-| `x` / `Del` | Remove queue item (Host, queue focused) |
-| `Ctrl+U`    | Vote Up selected track              |
-| `Ctrl+D`    | Vote Down selected track            |
-| `Ctrl+G`    | Info                                |
-| `Ctrl+L`    | Listeners & transfer host (Host)    |
-| `-` / `=`   | Volume Down / Up                    |
-| `Ctrl+C`    | Quit                                |
+| Key         | Action                                       |
+| ----------- | -------------------------------------------- |
+| `Ctrl+S`    | Focus search                                 |
+| `Ctrl+R`    | Clear search results                         |
+| `Ctrl+T`    | Focus chat                                   |
+| `↑` / `↓`   | Chat history (chat input focused)            |
+| `Ctrl+O`    | Play / pause (host)                          |
+| `Ctrl+N`    | Skip track (host)                            |
+| `x` / `Del` | Remove queue item (host, queue focused)      |
+| `Ctrl+U`    | Vote up selected track                       |
+| `Ctrl+D`    | Vote down selected track                     |
+| `-` / `=`   | Volume down / up                             |
+| `m`         | Mute / unmute                                |
+| `Ctrl+K`    | Copy room name to clipboard                  |
+| `Ctrl+L`    | Listeners & transfer host (host)             |
+| `Ctrl+G`    | Info (version, links, shortcuts)             |
+| `Ctrl+B`    | Report a bug (Google Form / GitHub)          |
+| `Ctrl+P`    | Command palette (save screenshot, etc.)      |
+| `Ctrl+C`    | Quit                                         |
 
 ---
 
