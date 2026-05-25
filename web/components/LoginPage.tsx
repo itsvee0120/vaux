@@ -44,6 +44,10 @@ export function LoginPage({
     setMode("create");
   }
 
+  function handleCopySlug() {
+    navigator.clipboard.writeText(generatedSlug);
+  }
+
   return (
     <main className="relative isolate grid min-h-dvh w-full min-w-0 grid-rows-[1fr_auto] overflow-x-hidden bg-vaux-bg-dark font-mono text-white box-border">
       <LoginBackground />
@@ -89,7 +93,9 @@ export function LoginPage({
             onSubmit={(e) => {
               e.preventDefault();
               const effectiveRoomId =
-                mode === "create" ? roomId.trim() || generatedSlug : roomId.trim();
+                mode === "create"
+                  ? roomId.trim() || generatedSlug
+                  : roomId.trim();
               if (mode === "create" && effectiveRoomId !== roomId) {
                 onRoomIdChange(effectiveRoomId);
               }
@@ -101,6 +107,14 @@ export function LoginPage({
                 <span className="flex-1 truncate text-base text-vaux-green sm:text-sm">
                   {generatedSlug || "…"}
                 </span>
+                <button
+                  type="button"
+                  onClick={handleCopySlug}
+                  className="shrink-0 cursor-pointer text-xs text-zinc-500 hover:text-vaux-green transition-colors"
+                  title="Copy slug"
+                >
+                  {"📋copy"}
+                </button>
                 <button
                   type="button"
                   onClick={handleCreate}
@@ -139,7 +153,12 @@ export function LoginPage({
 
           {mode === "join" && (
             <p className="text-center text-xs text-zinc-600">
-              ask the host for their room name
+              Ask the host for their room name
+            </p>
+          )}
+          {mode === "create" && (
+            <p className="text-center text-xs text-zinc-600">
+              Copy the room name to share with others.
             </p>
           )}
         </div>
