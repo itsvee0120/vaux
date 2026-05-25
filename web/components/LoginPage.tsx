@@ -210,7 +210,7 @@ export function LoginPage({
             rel="noopener noreferrer"
             className="underline"
           >
-            Vaux on CLI
+            Vaux on CLI via PyPI
           </a>
         </span>
       </footer>
