@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 authors = [
     { name = "Violet Nguyen", email = "nviolet0120@gmail.com" },
 ]
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "click",
     "textual",
