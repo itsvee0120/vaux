@@ -724,9 +724,18 @@ class NowPlaying(Static):
         self._volume = volume
         self._render_state()
 
+    def _volume_indicator(self) -> str:
+        if self._volume == 0:
+            return "🔇 muted"
+        if self._volume < 34:
+            return f"🔈 {self._volume}%"
+        if self._volume < 67:
+            return f"🔉 {self._volume}%"
+        return f"🔊 {self._volume}%"
+
     def _render_state(self):
         s = self._state
-        vol = "muted" if self._volume == 0 else f"vol {self._volume}%"
+        vol = self._volume_indicator()
         if not s.video_id:
             self.update(f"◼  no track playing  {vol}")
             return
@@ -919,7 +928,7 @@ class VauxApp(App):
 
     # ── layout ─────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield Header(show_clock=True, icon="☰")
 
         with Horizontal(id="main"):
             # left: queue + search
@@ -951,6 +960,8 @@ class VauxApp(App):
     # ── lifecycle ──────────────────────────────────────────────────────────
     async def on_mount(self):
         self.title = f"vaux / {self.room_id}"
+        self.sub_title = "connecting…"
+        self.screen.loading = True
         self._register_socket_events()
         await self.socket.connect()
         await self.socket.join_room(self.room_id, self.username, self.username)
@@ -982,7 +993,9 @@ class VauxApp(App):
         await self._refresh_queue()
         self._refresh_now_playing()
         self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
+        self._update_header_subtitle()
         await self._apply_playback()
+        self.screen.loading = False
         self._post_system(f"joined [{self.role}]")
         if not getattr(self, "player", None):
             self._post_system("mpv not found on system. Please install mpv to hear audio.")
@@ -1002,6 +1015,7 @@ class VauxApp(App):
         self.members = [m for m in self.members if m.get("userId") != uid]
         name = left.get("username", uid) if left else uid
         self._post_system(f"{name} left")
+        self._update_header_subtitle()
 
     async def _on_host_changed(self, data: dict):
         new_host_id = data.get("newHostId")
@@ -1010,7 +1024,8 @@ class VauxApp(App):
         for member in self.members:
             member["role"] = "host" if member.get("userId") == new_host_id else "listener"
         new_name = data.get("newHostUsername", new_host_id)
-        self._post_system(f"⭐ {new_name} is now host")
+        self.notify(f"⭐ {new_name} is now host", timeout=3)
+        self._update_header_subtitle()
         await self._refresh_queue()
 
     async def _on_queue_updated(self, data: dict):
@@ -1041,6 +1056,11 @@ class VauxApp(App):
     def _refresh_now_playing(self):
         widget = self.query_one("#now-playing", NowPlaying)
         widget.update_state(self.playback)
+
+    def _update_header_subtitle(self) -> None:
+        host = next((m for m in self.members if m.get("role") == "host"), None)
+        name = (host.get("username") if host else None) or "?"
+        self.sub_title = f"host: {name[:30]}"
 
     def _post_chat(self, username: str, text: str):
         log = self.query_one("#chat-log", RichLog)
@@ -1293,7 +1313,10 @@ class VauxApp(App):
             self._post_system("Only the host can skip tracks.")
             return
         if self.playback.video_id:
-            self._post_system("Skipped track · next track loading, audio starts in ~5s…")
+            self.notify(
+                "Skipped track · next track loading, audio starts in ~5s…",
+                timeout=4,
+            )
             await self._trigger_ended()
 
     def _focused_in_queue(self) -> bool:
