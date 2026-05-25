@@ -85,6 +85,7 @@ app.get("/youtube/search", async (req, res) => {
         item.thumbnails?.length > 0
           ? item.thumbnails[0].url
           : `https://i.ytimg.com/vi/${item.id}/mqdefault.jpg`,
+      duration: item.duration ?? 0,
     }));
 
     res.json({ results });
@@ -141,6 +142,7 @@ function emptyPlaybackState() {
     channel: null,
     thumbnail: null,
     trackId: null,
+    duration: 0,
     positionSeconds: 0,
     isPlaying: false,
     updatedAt: Date.now(),
@@ -180,6 +182,7 @@ function setPlaybackFromTrack(room, track) {
     channel: track.channel,
     thumbnail: track.thumbnail,
     trackId: track.id,
+    duration: track.duration ?? 0,
     positionSeconds: 0,
     isPlaying: true,
     updatedAt: Date.now(),
@@ -259,22 +262,26 @@ io.on("connection", (socket) => {
   });
 
   // ── QUEUE ──
-  socket.on("queue:add", ({ roomId, videoId, title, channel, thumbnail }) => {
-    const room = getRoom(roomId);
+  socket.on(
+    "queue:add",
+    ({ roomId, videoId, title, channel, thumbnail, duration }) => {
+      const room = getRoom(roomId);
 
-    const item = {
-      id: Date.now().toString(),
-      videoId,
-      title,
-      channel,
-      thumbnail,
-      votes: 0,
-      addedBy: socket.data.username,
-    };
+      const item = {
+        id: Date.now().toString(),
+        videoId,
+        title,
+        channel,
+        thumbnail,
+        duration: duration ?? 0,
+        votes: 0,
+        addedBy: socket.data.username,
+      };
 
-    room.queue.push(item);
-    io.to(roomId).emit("queue:updated", { queue: room.queue });
-  });
+      room.queue.push(item);
+      io.to(roomId).emit("queue:updated", { queue: room.queue });
+    },
+  );
 
   socket.on("queue:vote", ({ roomId, itemId, value }) => {
     const room = getRoom(roomId);

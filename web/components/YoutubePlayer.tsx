@@ -31,6 +31,7 @@ type YTNamespace = {
     PLAYING: number;
     PAUSED: number;
     ENDED: number;
+    BUFFERING: number;
   };
 };
 
@@ -46,19 +47,26 @@ let apiLoading: Promise<void> | null = null;
 
 // ── loadYouTubeApi ──
 // Injects the YouTube IFrame API script once; resolves when YT.Player is ready.
+// On script error (network, ad blocker), rejects and clears apiLoading so the
+// next mount can retry instead of hanging on a forever-pending promise.
 function loadYouTubeApi(): Promise<void> {
   if (window.YT?.Player) return Promise.resolve();
   if (apiLoading) return apiLoading;
-  apiLoading = new Promise((resolve) => {
+  apiLoading = new Promise((resolve, reject) => {
     const done = () => resolve();
     const prev = window.onYouTubeIframeAPIReady;
     window.onYouTubeIframeAPIReady = () => {
       prev?.();
       done();
     };
-    if (!document.querySelector(`script[src="${API_SRC}"]`)) {
+    const existing = document.querySelector(`script[src="${API_SRC}"]`);
+    if (!existing) {
       const tag = document.createElement("script");
       tag.src = API_SRC;
+      tag.onerror = () => {
+        apiLoading = null;
+        reject(new Error("YouTube IFrame API failed to load"));
+      };
       document.head.appendChild(tag);
     } else if (window.YT?.Player) {
       done();
@@ -226,7 +234,12 @@ export function YoutubePlayer({
           },
           onStateChange: (event) => {
             const YT = window.YT!;
-            setLocalPlaying(event.data === YT.PlayerState.PLAYING);
+            // Count BUFFERING as "in-flight playing" so the blocked-autoplay
+            // overlay doesn't flash during slow connection startup.
+            setLocalPlaying(
+              event.data === YT.PlayerState.PLAYING ||
+                event.data === YT.PlayerState.BUFFERING,
+            );
 
             if (!isHostRef.current) {
               // If listener manually clicks the iframe to bypass restrictions, sync them!
@@ -259,7 +272,12 @@ export function YoutubePlayer({
     let cancelled = false;
 
     (async () => {
-      await loadYouTubeApi();
+      try {
+        await loadYouTubeApi();
+      } catch (e) {
+        console.error(e);
+        return;
+      }
       if (cancelled || !window.YT || !wrapperRef.current) return;
       buildPlayer();
     })();
@@ -267,6 +285,10 @@ export function YoutubePlayer({
     return () => {
       cancelled = true;
       readyRef.current = false;
+      if (applyTimeoutRef.current) {
+        clearTimeout(applyTimeoutRef.current);
+        applyTimeoutRef.current = null;
+      }
       playerRef.current?.destroy();
       playerRef.current = null;
     };

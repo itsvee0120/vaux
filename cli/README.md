@@ -8,6 +8,10 @@ A terminal client for [Vaux](https://github.com/itsvee0120/vaux) listening rooms
 
 Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/itsvee0120/vaux/main/assets/vaux_cli.png" alt="Vaux CLI lobby preview" width="640" />
+</p>
+
 ## Features
 
 - **Synchronized playback** — everyone hears the same timestamp
@@ -69,6 +73,8 @@ vaux --server http://localhost:4000 my-room -u yourname
 | `Ctrl+D`   | Vote down selected track            |
 | `Ctrl+G`   | Info (version, links, shortcuts)    |
 | `Ctrl+L`   | Listeners & transfer host (host)    |
+| `Ctrl+B`   | Report a bug (Google Form / GitHub) |
+| `Ctrl+P`   | Command palette (save screenshot, etc.) |
 | `-` / `=`  | Volume down / up                    |
 | `Ctrl+C`   | Quit                                |
 
@@ -90,6 +96,23 @@ yt-dlp --js-runtimes node --remote-components ejs:github "https://youtu.be/VIDEO
 ```
 
 If that command works locally, the CLI fallback should work too.
+
+## Reporting bugs
+
+Found something broken? You have three ways to report it:
+
+- **Inside the app** — press `Ctrl+B` from the lobby or any room. An overlay
+  opens with two choices:
+  - **Google Form** — anonymous, no GitHub account needed.
+  - **GitHub Issues** — opens a pre-filled issue with your vaux-cli version,
+    Python version, and OS already in the body.
+- **From the shell** — `vaux bug` opens the GitHub Issues page in your browser
+  with the same pre-filled template.
+- **Attaching a screenshot** — press `Ctrl+P` inside vaux to open Textual's
+  command palette, then choose **Save screenshot**. vaux writes an SVG of the
+  current terminal screen to your working directory; attach it to the form or
+  drop it into the GitHub issue. Close the bug-report overlay before capturing
+  so the screenshot shows the underlying screen.
 
 ## Development
 
