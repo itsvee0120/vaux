@@ -34,6 +34,7 @@ import {
   Search as SearchIcon,
   ListMusic,
   MessageSquare,
+  Lock,
 } from "lucide-react";
 
 type Tab = "player" | "search" | "queue" | "chat";
@@ -76,6 +77,10 @@ type LobbyPageProps = {
   onTransferHost: (userId: string) => void;
   onLeave: () => void;
   isHost: boolean;
+  isPrivate?: boolean;
+  /** Plaintext password for reconstructing the invite URL on copy. Lost on
+   *  reload (per spec) — null means "show 'private room' but copy is unavailable". */
+  privatePassword?: string | null;
   queue: Track[];
   messages: Message[];
   playback: PlaybackState;
@@ -105,6 +110,8 @@ export function LobbyPage({
   onTransferHost,
   onLeave,
   isHost,
+  isPrivate = false,
+  privatePassword = null,
   queue,
   messages,
   playback,
@@ -310,7 +317,17 @@ export function LobbyPage({
   const seekPct = Math.min(100, Math.max(0, (seekValue / seekMax) * 100));
 
   function handleCopyRoom() {
-    navigator.clipboard.writeText(roomId);
+    if (isPrivate) {
+      // Reconstruct the invite URL from the in-memory password. After a
+      // tab reload the password is gone (sessionStorage holds derived
+      // material only); in that case there's nothing to copy.
+      if (!privatePassword || typeof window === "undefined") return;
+      navigator.clipboard.writeText(
+        `${window.location.origin}/#${privatePassword}`,
+      );
+    } else {
+      navigator.clipboard.writeText(roomId);
+    }
     setCopiedRoom(true);
     setTimeout(() => setCopiedRoom(false), 1500);
   }
@@ -786,23 +803,49 @@ export function LobbyPage({
           </TooltipContent>
         </Tooltip>
         <span className="shrink-0 text-zinc-600">/</span>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span
-              className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
-                copiedRoom
-                  ? "text-vaux-green"
-                  : "text-vaux-green-dark hover:text-vaux-green"
-              }`}
-              onClick={handleCopyRoom}
-            >
-              {roomId}
-            </span>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            Click to copy room name — share to invite friends
-          </TooltipContent>
-        </Tooltip>
+        {isPrivate ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`flex min-w-0 cursor-pointer items-center gap-1 truncate text-sm transition-colors ${
+                  copiedRoom
+                    ? "text-vaux-green"
+                    : privatePassword
+                      ? "text-vaux-green-dark hover:text-vaux-green"
+                      : "text-vaux-green-dark"
+                } ${!privatePassword ? "cursor-default" : ""}`}
+                onClick={handleCopyRoom}
+              >
+                <Lock className="size-3 shrink-0" aria-hidden />
+                private room
+                <span className="text-xs text-zinc-700">· chat E2E</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {privatePassword
+                ? "Click to copy invite link — share only with people you trust"
+                : "Invite link not available after reload (host can re-share original)"}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span
+                className={`min-w-0 cursor-pointer truncate text-sm transition-colors ${
+                  copiedRoom
+                    ? "text-vaux-green"
+                    : "text-vaux-green-dark hover:text-vaux-green"
+                }`}
+                onClick={handleCopyRoom}
+              >
+                {roomId}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Click to copy room name — share to invite friends
+            </TooltipContent>
+          </Tooltip>
+        )}
         {copiedRoom && (
           <span className="shrink-0 text-xs text-vaux-green">✓ copied</span>
         )}

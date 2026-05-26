@@ -1,0 +1,12 @@
+{
+  "password": "AAAAAAAAAAAAAAAAAAAAAA",
+  "salt_hex": "f4c839505e351f0d2d8733459e2db801",
+  "auth_proof_hex": "67edb03213aa0b1e5c1b186b8738481cde8429320e0f780a3ee6e14720e59fe3",
+  "auth_proof_b64": "Z+2wMhOqCx5cGxhrhzhIHN6EKTIOD3gKPubhRyDln+M=",
+  "chat_key_hex": "5763d9255d9d10ba5a82f0af78cf096317f8d49752ed8985beac13cbe98205fa",
+  "room_id_b64url": "zhTQtLOs4ONbOKhg3CitMA",
+  "chat_round_trip": {
+    "plaintext": "hello vaux",
+    "decrypts_back": "hello vaux"
+  }
+}

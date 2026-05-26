@@ -41,21 +41,48 @@ class VauxSocket:
         await self.sio.disconnect()
 
     # ── emit helpers — mirrors web client emit calls ───────────────────────
-    async def join_room(self, room_id: str, username: str):
-        # Server assigns userId on connection; client only supplies its display
-        # name. Anything client-side sending userId would be ignored anyway.
-        await self.sio.emit("room:join", {
-            "roomId": room_id,
-            "username": username,
-        })
+    async def join_room(
+        self,
+        room_id: str,
+        username,
+        *,
+        auth_proof_b64: str | None = None,
+        create: bool = False,
+    ):
+        """Public join: pass `username` as a plain string.
+        Private join: pass `username` as `{"ct": <b64>, "nonce": <b64>}`
+        (encrypted with chatKey) AND `auth_proof_b64`. The server branches on
+        the presence of `authProof` — see PRIVATE_ROOMS_SPEC.md."""
+        payload: dict = {"roomId": room_id, "username": username}
+        if auth_proof_b64 is not None:
+            payload["authProof"] = auth_proof_b64
+            if create:
+                payload["create"] = True
+        await self.sio.emit("room:join", payload)
 
-    async def send_chat(self, room_id: str, text: str):
-        # Server stamps userId/username from the socket session; client cannot
-        # forge sender identity on chat messages.
-        await self.sio.emit("chat:send", {
-            "roomId": room_id,
-            "text": text,
-        })
+    async def send_chat(
+        self,
+        room_id: str,
+        text: str | None = None,
+        *,
+        ct: str | None = None,
+        nonce: str | None = None,
+    ):
+        """Public room: pass `text` (plaintext).
+        Private room: pass `ct`/`nonce` (base64 ciphertext from encrypt_chat).
+        Server relays opaquely — never inspects either form."""
+        payload: dict = {"roomId": room_id}
+        if ct is not None and nonce is not None:
+            payload["ct"] = ct
+            payload["nonce"] = nonce
+        else:
+            payload["text"] = text or ""
+        await self.sio.emit("chat:send", payload)
+
+    async def destroy_room(self, room_id: str):
+        """Host-only burn for private rooms — server immediately deletes
+        the room and force-disconnects all sockets. No-op on public rooms."""
+        await self.sio.emit("room:destroy", {"roomId": room_id})
 
     async def add_to_queue(self, room_id: str, video_id: str, title: str,
                            channel: str, thumbnail: str, duration: float = 0.0):

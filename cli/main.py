@@ -14,6 +14,12 @@ from importlib.metadata import version, PackageNotFoundError
 
 import click
 from vaux.app import VauxApp, LobbyApp
+from vaux.crypto import (
+    auth_proof_to_b64,
+    derive_room_material,
+    is_well_formed_password,
+    parse_invite,
+)
 from vaux.mpv import ensure_mpv
 
 # ----------------------------------------------------------------------
@@ -97,14 +103,35 @@ def cli(ctx, server, debug, username, show_version, show_path, room_id):
     ensure_mpv()
     ensure_ytdlp()
 
+    # `room_id` arg is a private invite URL (or raw 22-char password) when it
+    # parses as one. We extract the password and route through the private
+    # quick-join path. Public room names like "velvet-orbit-42" never match.
+    invite_password: str | None = parse_invite(room_id) if room_id else None
+
     # ------------------------
     # quick join
     # ------------------------
-    if room_id and username:
+    if room_id and username and not invite_password:
         VauxApp(
             room_id=room_id,
             username=username,
             server_url=server,
+        ).run()
+        return
+
+    if invite_password and username:
+        # Argon2id derivation is ~250 ms — block here so the user sees a
+        # clean "deriving keys…" indicator before VauxApp's mount fires.
+        click.echo("Deriving keys (argon2id)…", err=False)
+        material = derive_room_material(invite_password)
+        VauxApp(
+            room_id=material.room_id,
+            username=username,
+            server_url=server,
+            is_private=True,
+            auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+            chat_key=material.chat_key,
+            password=invite_password,
         ).run()
         return
 
@@ -114,18 +141,24 @@ def cli(ctx, server, debug, username, show_version, show_path, room_id):
     if room_id and not username:
         click.echo("Pass -u <name> to quick-join this room directly.")
 
-    lobby = LobbyApp(server_url=server)
+    # Pre-fill the private-paste tab if the user passed an invite URL but no
+    # username — keeps them from having to paste twice.
+    lobby = LobbyApp(server_url=server, initial_invite=invite_password)
     lobby.run()
 
     if lobby.result is None:
         return
 
-    room_id, username = lobby.result
-
+    sel = lobby.result
     VauxApp(
-        room_id=room_id,
-        username=username,
+        room_id=sel.room_id,
+        username=sel.username,
         server_url=server,
+        is_private=sel.is_private,
+        auth_proof_b64=sel.auth_proof_b64,
+        chat_key=sel.chat_key,
+        password=sel.password,
+        create_private=sel.create,
     ).run()
 
 @cli.command()
