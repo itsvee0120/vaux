@@ -251,7 +251,7 @@ def _build_app_info(in_room: bool) -> str:
             "  ctrl+b   report a bug",
             "  ctrl+p   command palette (save screenshot, etc.)",
             "  ctrl+c   quit",
-            "  type /host <username> to transfer host to another user",
+            "  type '/host <username>' to transfer host",
         ])
     else:
         lines.extend([
