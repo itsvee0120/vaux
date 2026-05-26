@@ -776,7 +776,10 @@ io.on("connection", (socket) => {
         thumbnail: thumbnailFor(videoId),
         duration: sanitizeDuration(duration),
         votes: 0,
-        addedBy: socket.data.username,
+        // Private rooms have no plaintext username server-side
+        // (socket.data.username is the userId UUID). Receiving clients
+        // resolve addedById against their decrypted member map.
+        addedBy: socket.data.private ? undefined : socket.data.username,
         addedById: socket.data.userId,
       };
 

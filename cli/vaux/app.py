@@ -66,7 +66,7 @@ def _truncate_cells(text: str, max_cells: int) -> str:
         width += w
     return "".join(out)
 
-from vaux.socket_client import VauxSocket
+from vaux.socket_client import VauxSocket, probe_join
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url, ping_server
 from vaux.mpv import find_mpv
@@ -667,9 +667,16 @@ class LobbyApp(App):
         Binding("tab", "focus_next", "Next field", show=False),
     ]
 
-    def __init__(self, server_url: str, *, initial_invite: str | None = None):
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        initial_invite: str | None = None,
+        initial_error: str | None = None,
+    ):
         super().__init__()
         self.server_url = server_url
+        self._initial_error = initial_error
         # _mode ∈ {"create", "join", "private_create", "private_paste"}.
         # Sole entry from main.py for invite URLs lands us in "private_paste"
         # with the password pre-filled — same UX as the web client.
@@ -719,6 +726,14 @@ class LobbyApp(App):
         self._apply_mode()
         self._apply_title()
         asyncio.create_task(ping_server(self.server_url))
+        if self._initial_error:
+            # Surfaced from a failed VauxApp join — replaces whatever default
+            # hint _apply_mode set so the user sees why they bounced back.
+            self.query_one("#hint", Label).update(
+                f"[red]{self._initial_error}[/red]"
+            )
+            self.notify(self._initial_error, severity="error", timeout=8)
+            self._initial_error = None
 
     def on_resize(self, event) -> None:
         self._apply_title()
@@ -868,9 +883,14 @@ class LobbyApp(App):
         self.query_one("#room-input", Input).value = text
 
     def on_input_submitted(self, event: Input.Submitted):
-        self._submit()
+        asyncio.create_task(self._submit_async())
 
     def _submit(self):
+        # Sync wrapper kept so button handlers don't have to be async. The
+        # probe must run on the event loop, so we tail-call the async path.
+        asyncio.create_task(self._submit_async())
+
+    async def _submit_async(self):
         username = self.query_one("#username-input", Input).value.strip()
         hint = self.query_one("#hint", Label)
 
@@ -904,35 +924,66 @@ class LobbyApp(App):
             hint.update("[red]enter your name[/red]")
             return
 
-        if password:
-            # Argon2id is ~250 ms — derive once before exiting the lobby so
-            # VauxApp doesn't block its mount on it. The lobby UI freezes for
-            # a quarter second here, which is acceptable on submit.
-            try:
-                hint.update("deriving keys…")
-                self.refresh()
-                material = derive_room_material(password)
-            except Exception as exc:
-                hint.update(f"[red]derivation failed: {exc}[/red]")
-                return
-            self.result = LobbySelection(
-                room_id=material.room_id,
-                username=username,
-                is_private=True,
-                auth_proof_b64=auth_proof_to_b64(material.auth_proof),
-                chat_key=material.chat_key,
-                password=password,
-                create=(self._mode == "private_create"),
-            )
-        else:
-            if not room_id:
-                hint.update("[red]enter a room name[/red]")
-                return
-            self.result = LobbySelection(
-                room_id=room_id, username=username, is_private=False,
-            )
+        # Disable the go button while we probe so impatient double-clicks
+        # don't spawn parallel probe tasks (they'd race the disconnect).
+        go_btn = self.query_one("#go-btn", Button)
+        go_btn.disabled = True
+        try:
+            if password:
+                # Argon2id is ~250 ms — derive once before probing so VauxApp
+                # doesn't pay the cost again on its real join.
+                try:
+                    hint.update("deriving keys…")
+                    self.refresh()
+                    material = derive_room_material(password)
+                except Exception as exc:
+                    hint.update(f"[red]derivation failed: {exc}[/red]")
+                    return
 
-        self.exit()
+                hint.update("connecting…")
+                self.refresh()
+                from vaux.crypto import encrypt_chat
+                cipher = encrypt_chat(material.chat_key, username)
+                err = await probe_join(
+                    self.server_url,
+                    material.room_id,
+                    cipher,
+                    is_private=True,
+                    auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                    create=(self._mode == "private_create"),
+                )
+                if err:
+                    hint.update(f"[red]{err}[/red]")
+                    return
+                self.result = LobbySelection(
+                    room_id=material.room_id,
+                    username=username,
+                    is_private=True,
+                    auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                    chat_key=material.chat_key,
+                    password=password,
+                    create=(self._mode == "private_create"),
+                )
+            else:
+                if not room_id:
+                    hint.update("[red]enter a room name[/red]")
+                    return
+                hint.update("connecting…")
+                self.refresh()
+                err = await probe_join(
+                    self.server_url, room_id, username, is_private=False,
+                )
+                if err:
+                    hint.update(f"[red]{err}[/red]")
+                    return
+                self.result = LobbySelection(
+                    room_id=room_id, username=username, is_private=False,
+                )
+
+            self.exit()
+        finally:
+            if self.result is None:
+                go_btn.disabled = False
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=False))
@@ -1272,6 +1323,10 @@ class VauxApp(App):
         self.role = "listener"
         self.members: list[dict] = []
         self.queue: list[dict] = []
+        # Set by _on_room_join_failed before we exit() so main.py can decide
+        # whether to re-open the lobby with the error displayed.
+        self.join_error: str | None = None
+        self._joined = False
         self.playback = PlaybackState()
         self.search_results: list[SearchResult] = []
         self.last_video_id = None
@@ -1427,6 +1482,7 @@ class VauxApp(App):
 
     async def _on_room_joined(self, data: dict):
         try:
+            self._joined = True
             self.user_id = data.get("userId", "")
             self.role = data.get("role", "listener")
             self.is_host = self.role == "host"
@@ -1439,7 +1495,10 @@ class VauxApp(App):
                     m["username"] = self._resolve_member_name(m)
                     m.pop("usernameCipher", None)
             self.members = members
-            self.queue = data.get("queue", [])
+            initial_queue = data.get("queue", []) or []
+            for track in initial_queue:
+                track["addedBy"] = self._resolve_added_by(track)
+            self.queue = initial_queue
             pb = data.get("playbackState") or {}
             self.playback = PlaybackState.from_dict(pb)
             await self._refresh_queue()
@@ -1452,7 +1511,7 @@ class VauxApp(App):
             self._post_system(f"joined [{self.role}]{suffix}")
             if self.is_private:
                 self._post_system(
-                    "🔒 chat is end-to-end encrypted — queue/playback are not"
+                    "chat is encrypted — queue/playback are not"
                 )
             await self._apply_playback(announce=False)
             if not getattr(self, "player", None):
@@ -1506,9 +1565,30 @@ class VauxApp(App):
         self._update_header_subtitle()
         await self._refresh_queue()
 
+    def _resolve_added_by(self, track: dict) -> str:
+        """Display name for a queue item's adder. Public rooms get the
+        plaintext `addedBy` server-side; private rooms get only `addedById`
+        and we look up the locally-decrypted name."""
+        if track.get("addedBy"):
+            return track["addedBy"]
+        uid = track.get("addedById")
+        if uid:
+            cached = self._name_cache.get(uid)
+            if cached:
+                return cached
+            member = next((m for m in self.members if m.get("userId") == uid), None)
+            if member and member.get("username"):
+                return member["username"]
+        return "anon"
+
     async def _on_queue_updated(self, data: dict):
         old_ids = {t["id"] for t in self.queue}
-        self.queue = data.get("queue", [])
+        incoming = data.get("queue", []) or []
+        # Normalize addedBy in-place so QueueItem rendering and toast text
+        # don't both need to re-resolve. Private rooms ship addedBy=undefined.
+        for track in incoming:
+            track["addedBy"] = self._resolve_added_by(track)
+        self.queue = incoming
         for track in self.queue:
             if track["id"] in old_ids:
                 continue
@@ -1520,7 +1600,7 @@ class VauxApp(App):
             if not added_by_id and track.get("addedBy") == self.username:
                 continue
             title = (track.get("title") or "")[:40]
-            added_by = track.get("addedBy", "?")
+            added_by = track.get("addedBy") or "?"
             self.notify(f"♪ {title} added by {added_by}", timeout=3)
         await self._refresh_queue()
 
@@ -1569,10 +1649,6 @@ class VauxApp(App):
 
     async def _on_room_join_failed(self, data: dict):
         reason = data.get("reason", "join refused")
-        try:
-            self.screen.loading = False
-        except Exception:
-            pass
 
         if self.is_private:
             # Private rooms collapse "wrong password" and "room not found"
@@ -1586,10 +1662,20 @@ class VauxApp(App):
                 msg = "private room is full"
             else:
                 msg = reason
-            self.notify(f"could not join: {msg}", severity="error", timeout=8)
-            self._post_system(f"could not join: {msg}")
         else:
-            self.notify(f"could not join: {reason}", severity="error", timeout=6)
+            msg = reason
+
+        # If we never made it past room:joined, bail back to the lobby with
+        # the error pre-rendered. Otherwise (we WERE in the room and the
+        # server kicked us mid-session) keep the UI alive and just toast —
+        # rare path, but trapping the user in the lobby would be jarring.
+        if not self._joined:
+            self.join_error = msg
+            self.exit()
+            return
+
+        self.notify(f"could not join: {msg}", severity="error", timeout=8)
+        self._post_system(f"could not join: {msg}")
 
     async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")

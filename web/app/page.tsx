@@ -652,6 +652,7 @@ export default function Home() {
     <LobbyPage
       roomId={roomId}
       username={username}
+      userId={myUserIdRef.current}
       members={members}
       onTransferHost={transferHost}
       onLeave={leaveRoom}

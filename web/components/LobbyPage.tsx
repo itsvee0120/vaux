@@ -73,6 +73,7 @@ function colorForUser(userId: string | undefined): string {
 type LobbyPageProps = {
   roomId: string;
   username: string;
+  userId: string;
   members: { userId: string; username: string; role: string }[];
   onTransferHost: (userId: string) => void;
   onLeave: () => void;
@@ -106,6 +107,7 @@ type LobbyPageProps = {
 export function LobbyPage({
   roomId,
   username,
+  userId,
   members,
   onTransferHost,
   onLeave,
@@ -138,6 +140,19 @@ export function LobbyPage({
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("player");
+  // Resolve a queue item's display name. Public rooms have plaintext
+  // `addedBy`. Private rooms omit it (server doesn't know plaintext
+  // usernames) and clients map `addedById` against the locally-decrypted
+  // member list. Falls back to a generic placeholder if the member left
+  // before this client received their member_joined event.
+  const nameForAddedBy = (track: Track): string => {
+    if (track.addedBy) return track.addedBy;
+    if (track.addedById) {
+      const member = members.find((m) => m.userId === track.addedById);
+      if (member?.username) return member.username;
+    }
+    return "anon";
+  };
   // Track viewport so we can render exactly one layout tree instead of two.
   // Rendering both via Tailwind hidden/lg:flex would double-mount the
   // YoutubePlayer (real YT.Player instance) and the chatEndRef — both must be
@@ -194,11 +209,17 @@ export function LobbyPage({
     if (!notificationsReady || isDesktop) return;
     if (queue.length <= prev) return;
     // findLast picks the most recent track that isn't ours, in case a
-    // batch arrives at once (e.g. a multi-add or backfill).
-    const added = queue.slice(prev).findLast((t) => t.addedBy !== username);
+    // batch arrives at once (e.g. a multi-add or backfill). For private
+    // rooms addedBy is undefined; match on addedById against our own
+    // userId so we never toast on our own adds.
+    const added = queue
+      .slice(prev)
+      .findLast((t) =>
+        t.addedById ? t.addedById !== userId : t.addedBy !== username,
+      );
     if (!added) return;
     if (activeTab === "queue") return;
-    toast(`🎵 ${added.addedBy} added`, {
+    toast(`🎵 ${nameForAddedBy(added)} added`, {
       description: decodeHTML(added.title),
       action: {
         label: "View",
@@ -629,7 +650,7 @@ export function LobbyPage({
                     {decodeHTML(track.title)}
                   </p>
                   <p className="truncate text-xs text-vaux-green">
-                    {track.addedBy}
+                    {nameForAddedBy(track)}
                   </p>
                 </div>
                 <div className="flex flex-col items-center gap-1">

@@ -10,6 +10,75 @@ from typing import Callable
 import socketio
 
 
+async def probe_join(
+    server_url: str,
+    room_id: str,
+    username,  # str for public, {"ct", "nonce"} dict for private
+    *,
+    is_private: bool = False,
+    auth_proof_b64: str | None = None,
+    create: bool = False,
+    timeout: float = 6.0,
+) -> str | None:
+    """Run a join handshake on a throwaway socket. Returns None on success,
+    a human-friendly error message on failure. Used to validate credentials
+    BEFORE launching VauxApp so a rejected join never flashes the room UI.
+
+    The server sees two joins (probe + real) and a leave in between, which
+    starts the 5 s blip timer for private rooms. VauxApp's real join cancels
+    that timer well before it fires.
+    """
+    sio = socketio.AsyncClient(reconnection=False)
+    result: dict = {}
+    done = asyncio.Event()
+
+    @sio.on("room:joined")
+    async def _ok(_):
+        result["ok"] = True
+        done.set()
+
+    @sio.on("room:join_failed")
+    async def _fail(data):
+        result["reason"] = (data or {}).get("reason", "join refused")
+        result["retryAfterMs"] = (data or {}).get("retryAfterMs")
+        done.set()
+
+    try:
+        await sio.connect(server_url, transports=["websocket", "polling"])
+        payload: dict = {"roomId": room_id, "username": username}
+        if auth_proof_b64:
+            payload["authProof"] = auth_proof_b64
+            if create:
+                payload["create"] = True
+        await sio.emit("room:join", payload)
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return "connection timed out — check the server"
+    except Exception as exc:
+        return str(exc) or "could not connect to server"
+    finally:
+        try:
+            await sio.disconnect()
+        except Exception:
+            pass
+
+    if result.get("ok"):
+        return None
+
+    reason = result.get("reason", "join refused")
+    if is_private:
+        # Collapse "wrong code" and "room not found" so the server isn't a
+        # probe oracle for room existence. Matches VauxApp's wording.
+        if reason == "auth_failed":
+            return "wrong password, or this room no longer exists"
+        if reason == "locked":
+            ms = result.get("retryAfterMs") or 60_000
+            return f"too many attempts — try again in {max(1, ms // 1000)}s"
+        if reason in ("room full", "capacity"):
+            return "private room is full"
+    return reason
+
+
 class VauxSocket:
     def __init__(self, server_url: str):
         self.server_url = server_url
