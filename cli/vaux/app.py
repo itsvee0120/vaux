@@ -528,8 +528,6 @@ class ListenersModal(ModalScreen[None]):
 class LobbyApp(App):
     """Pre-game lobby: create a room (slug) or join an existing one."""
 
-    theme = "dracula"
-
     CSS = """
     Screen {
         align: center middle;
@@ -932,7 +930,6 @@ class SearchResultItem(ListItem):
 
 # ── VauxApp ────────────────────────────────────────────────────────────────
 class VauxApp(App):
-    theme = "dracula"
 
     CSS = """
     Screen {
@@ -1330,9 +1327,7 @@ class VauxApp(App):
     def _post_system(self, text: str):
         log = self.query_one("#system-log", RichLog)
         # Truncate over-long messages so a single system event can't wrap to
-        # multiple lines and consume too much of the small log area. The
-        # `· ` prefix that previously distinguished system from chat is no
-        # longer needed — they live in separate logs now.
+        # multiple lines and consume too much of the small log area.
         if len(text) > self._SYSTEM_MSG_MAX:
             text = text[: self._SYSTEM_MSG_MAX - 1] + "…"
         log.write(Text(text, style="dim"))
