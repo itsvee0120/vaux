@@ -34,6 +34,7 @@ https://github.com/user-attachments/assets/32c52cb0-c302-4878-8b1b-299a5fada3b3
 - Host controls: Play, pause, seek, skip tracks, and transfer host privileges
 - Live chat alongside the music
 - Local volume controls for all users (Web and CLI)
+- **Private rooms** — invite-only with end-to-end encrypted chat. Server only sees ciphertext. See [Private rooms](#private-rooms) below.
 
 ---
 
@@ -118,9 +119,17 @@ Note: `queue:add` thumbnails are server-derived from `videoId`. Any client-suppl
 
 | Event               | Direction       | Payload                                                      |
 | ------------------- | --------------- | ------------------------------------------------------------ |
-| `chat:send`         | Client → Server | `{ roomId, text }` — identity stamped server-side            |
-| `chat:message`      | Server → Client | `{ userId, username, text, timestamp }`                      |
+| `chat:send`         | Client → Server | `{ roomId, text }` (public) or `{ roomId, ct, nonce }` (private — ciphertext) |
+| `chat:message`      | Server → Client | `{ userId, username, text, timestamp }` (public) or `{ userId, ct, nonce, timestamp }` (private — no username) |
 | `chat:rate_limited` | Server → Client | `{ retryAfterMs }` — sent only to the throttled socket       |
+
+### Private rooms (additional events)
+
+| Event             | Direction       | Payload                                                       |
+| ----------------- | --------------- | ------------------------------------------------------------- |
+| `room:join`       | Client → Server | adds `{ authProof, create? }` and ships `username` as `{ct, nonce}` |
+| `room:destroy`    | Client → Server | `{ roomId }` — host only; burns the room immediately          |
+| `room:join_failed`| Server → Client | adds `{ reason: "auth_failed" \| "locked" \| ... }`; `locked` includes `retryAfterMs` |
 
 ### Sync formula
 
@@ -130,6 +139,53 @@ Both clients implement this identically on every `playback:state` event:
 currentPosition = state.positionSeconds + (Date.now() - state.updatedAt) / 1000;
 // seek player to currentPosition — corrects drift automatically
 ```
+
+---
+
+## Private rooms
+
+Invite-only rooms with end-to-end encrypted chat. Both the web client and the CLI implement the same crypto. The server never sees plaintext chat content or member names for private rooms.
+
+### What's protected vs. what isn't
+
+| Protected | How |
+| --- | --- |
+| Chat content | XSalsa20-Poly1305 (libsodium `crypto_secretbox`). Server only relays opaque ciphertext. |
+| Member display names | Encrypted with the same key as chat. Each client decrypts locally. |
+| Room existence | `roomId` is derived client-side from the invite code via Argon2id + a KDF. The server only sees the derived ID, never the code. |
+| Access | Argon2id-hashed auth proof on the server. Lockout for 60 s after 10 failed attempts per room. |
+
+| NOT protected | Why |
+| --- | --- |
+| YouTube `videoId` | Server resolves stream URLs via yt-dlp. Unavoidable. |
+| Queue metadata (title, channel, who added) | v1 scope is chat-only. |
+| Playback events (play, pause, seek) | Server-relayed for sync. |
+| Member count, connection timing | Server sees socket connections. |
+
+> Treat private rooms as **"private chat in a public room"** — not a hidden room. If you wouldn't want a server admin to see your queue or playback history, don't use vaux for that.
+
+### Cryptography
+
+- **Password:** 16 random bytes encoded as 22-char base64url (~128 bits entropy).
+- **KDF:** Argon2id (`opslimit=2`, `memlimit=64 MiB`, `outlen=32`) over a fixed application salt → libsodium KDF (`crypto_kdf_derive_from_key`) for `roomId`, `authProof`, and `chatKey` subkeys.
+- **Salt:** First 16 bytes of `SHA-256("vaux/private-room/v1")`, pinned in source. Per-room salts would require a server lookup that signals room existence.
+- **Wire:** Auth proof and ciphertext travel as standard base64. The roomId is base64url-unpadded.
+
+A cross-client KDF pin test (`web/__tests__/crypto.test.ts` ↔ `cli/tests/test_crypto.py`) asserts that JS and Python derive byte-identical material from the same password. Any drift fails CI.
+
+### Lifecycle
+
+- **Create:** First joiner sends `create: true`. Server stores the Argon2id hash of the auth proof.
+- **Last leave:** Room is deleted after a 5 s blip window (so reconnects don't burn it).
+- **Host quits:** Room is destroyed immediately. All other members are disconnected.
+
+### Invite URL
+
+```
+https://vaux-ten.vercel.app/#<22-char-code>
+```
+
+The fragment never reaches the server. The web client parses it, derives keys, then strips it via `history.replaceState`. The CLI accepts the same URL or the bare 22-char code.
 
 ---
 
@@ -355,6 +411,7 @@ Omit `--server` only when you intend to use the public hosted server.
 - [x] Synchronized playback
 - [x] Host controls
 - [x] Chat
+- [x] Private rooms with end-to-end encrypted chat
 - [ ] Emoji reactions
 - [ ] Song history
 - [ ] Public room discovery

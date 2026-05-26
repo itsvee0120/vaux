@@ -24,6 +24,7 @@ Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 - **Shared queue** — search YouTube and add tracks from the terminal
 - **Live voting** — vote tracks up or down to re-sort the queue
 - **Live chat** — talk with friends alongside the music
+- **Private rooms** — invite-only with end-to-end encrypted chat (XSalsa20-Poly1305, Argon2id key derivation). Room burns when the host leaves.
 - **Host controls** — play, pause, skip, remove tracks, transfer host
 - **No YouTube API key** — search and stream URLs come from the Vaux server (with local yt-dlp fallback)
 
@@ -59,11 +60,20 @@ Launch the interactive lobby:
 vaux
 ```
 
-Join a room directly:
+Join a public room directly:
 
 ```bash
 vaux <room-id> -u <your-name>
 ```
+
+Join a private room from an invite link or 22-character code:
+
+```bash
+vaux "https://vaux.app/#<22-char-code>" -u <your-name>
+vaux <22-char-code> -u <your-name>
+```
+
+Or paste the invite from the lobby's `🔒 private → paste invite` tab.
 
 Point at a local server when developing:
 
@@ -89,7 +99,7 @@ vaux --server http://localhost:4000 my-room -u yourname
 | `Ctrl+D`    | Vote down selected track                |
 | `-` / `=`   | Volume down / up                        |
 | `m`         | Mute / unmute                           |
-| `Ctrl+K`    | Copy room name to clipboard             |
+| `Ctrl+K`    | Copy room name (or private invite code) |
 | `Ctrl+L`    | Listeners & transfer host (host)        |
 | `Ctrl+G`    | Info (version, links, shortcuts)        |
 | `Ctrl+B`    | Report a bug (Google Form / GitHub)     |
@@ -97,6 +107,14 @@ vaux --server http://localhost:4000 my-room -u yourname
 | `Ctrl+C`    | Quit                                    |
 
 Type `/host <username>` in chat to transfer host to another listener.
+
+### Private rooms
+
+- Chat messages and member names are **end-to-end encrypted** with a key derived locally from the invite code (Argon2id). The server only sees ciphertext.
+- The **room ID, queue, and playback events are NOT encrypted** — only chat. Don't share private-room codes through untrusted channels.
+- The invite code stays in memory only. Closing the CLI loses it. Share before joining.
+- When the **host quits**, the room is destroyed immediately. Other members are disconnected.
+- Wrong codes lock the room for 60 s after 10 failed attempts.
 
 ### Lobby
 
