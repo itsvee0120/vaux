@@ -232,7 +232,7 @@ export function LoginPage({
         </Tooltip>
       )}
 
-      <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12">
+      <div className="relative z-10 flex min-h-0 flex-col items-center justify-center overflow-y-auto px-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[max(1.25rem,env(safe-area-inset-top))] pb-3 sm:px-8 sm:pt-6 sm:pb-4 md:px-10 md:pt-8 lg:px-12 lg:pt-12 lg:pb-8 xl:pt-16 xl:pb-12 2xl:pt-20 2xl:pb-16">
         <div className="flex w-full max-w-md min-w-0 flex-col gap-3 rounded-2xl border border-zinc-800/60 bg-vaux-bg-dark/70 p-6 shadow-xl shadow-black/30 backdrop-blur-md sm:max-w-lg sm:gap-4 sm:p-10 md:max-w-xl md:p-12">
           <header className="text-center sm:text-left">
             <h1 className="font-bold leading-[0.95] tracking-tight text-vaux-green text-[clamp(2.5rem,14vw,4.75rem)] sm:text-[clamp(2.75rem,12vw,5rem)]">
