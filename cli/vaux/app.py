@@ -982,6 +982,14 @@ class VauxApp(App):
         color: $success;
     }
 
+    /* Compact status feed sits between now-playing and chat. Fixed at 5
+       cells so the bulk of the right column belongs to chat — system events
+       scroll out of view here while chat history stays long. */
+    #system-log {
+        height: 5;
+        border-bottom: solid $primary-darken-2;
+    }
+
     #chat-log {
         height: 1fr;
     }
@@ -1122,9 +1130,24 @@ class VauxApp(App):
                     yield Input(placeholder="search youtube...", id="search-input")
                     yield Button("Search", id="search-btn", variant="primary")
 
-            # right: now playing + chat
+            # right: now playing + system + chat
             with Vertical(id="right"):
                 yield NowPlaying(id="now-playing")
+                # Dedicated status log for self-posts (loading, skipping,
+                # joins/leaves, paused/resumed). Lives above chat so chat
+                # stays uninterrupted by system noise. RichLog auto-scrolls
+                # by default, so newer events always end up visible.
+                yield RichLog(
+                    id="system-log",
+                    highlight=False,
+                    markup=False,
+                    wrap=True,
+                    min_width=20,
+                    # Smaller cap than chat — system messages are noise that
+                    # ages out fast; nobody scrolls back through them.
+                    max_lines=50,
+                    auto_scroll=True,
+                )
                 yield RichLog(
                     id="chat-log",
                     highlight=True,
@@ -1305,13 +1328,14 @@ class VauxApp(App):
         log.write(t)
 
     def _post_system(self, text: str):
-        log = self.query_one("#chat-log", RichLog)
+        log = self.query_one("#system-log", RichLog)
         # Truncate over-long messages so a single system event can't wrap to
-        # multiple lines and crowd out chat. The `· ` prefix gives system
-        # messages their own visual lane separate from `username text` chat.
+        # multiple lines and consume too much of the small log area. The
+        # `· ` prefix that previously distinguished system from chat is no
+        # longer needed — they live in separate logs now.
         if len(text) > self._SYSTEM_MSG_MAX:
             text = text[: self._SYSTEM_MSG_MAX - 1] + "…"
-        log.write(Text(f"· {text}", style="dim"))
+        log.write(Text(text, style="dim"))
 
     def _check_player_status(self):
         """Polls the mpv process to auto-skip when a track ends naturally or crashes."""
