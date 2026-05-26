@@ -1085,7 +1085,8 @@ class NowPlaying(Static):
 
 # ── QueueItem widget ───────────────────────────────────────────────────────
 class QueueItem(ListItem):
-    """Single queue row; host rows show a red x hint separated from the edge."""
+    """Single queue row. Host removes via the `x` / `delete` keybindings —
+    no visual delete affordance, the column is too narrow to spare cells."""
 
     DEFAULT_CSS = """
     QueueItem {
@@ -1098,16 +1099,6 @@ class QueueItem(ListItem):
     QueueItem > .queue-item-label {
         width: 1fr;
         content-align: left middle;
-    }
-
-    QueueItem > .queue-remove-hint {
-        width: 3;
-        min-width: 3;
-        margin-left: 1;
-        margin-right: 2;
-        content-align: center middle;
-        color: #C44545;
-        text-style: bold;
     }
     """
 
@@ -1122,8 +1113,6 @@ class QueueItem(ListItem):
         added_by = self._item.get("addedBy", "")
         vote_str = f"+{votes}" if votes >= 0 else str(votes)
         yield Label(f"{vote_str}  {title}  — {added_by}", classes="queue-item-label")
-        if self._is_host:
-            yield Static("x", classes="queue-remove-hint")
 
 
 # ── SearchResultItem widget ────────────────────────────────────────────────
