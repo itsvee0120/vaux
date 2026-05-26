@@ -17,6 +17,7 @@ Layout (single screen):
 
 import asyncio
 import os
+import re
 import sys
 import json
 import socket
@@ -1029,6 +1030,46 @@ class VauxApp(App):
         Binding("ctrl+k", "copy_room", "Copy room", show=False),
     ]
 
+    # Cap on system-message length before truncating with an ellipsis. Sized to
+    # comfortably fit on the 50-cell right column with the `· ` prefix and dim
+    # styling, while still letting genuine error strings (e.g. mpv-not-found,
+    # stream-resolution failures) keep their actionable second half.
+    _SYSTEM_MSG_MAX = 120
+
+    # Tighter cap for *titles inside* system messages (now-playing, skipping,
+    # added). 50-cell column - "· " - "▶ " ≈ 46, but with the trailing
+    # ellipsis and emoji width variance, 28 keeps single-line on most terminals.
+    _LOG_TITLE_MAX = 28
+
+    # Strip trailing YouTube boilerplate ("(Official Music Video)", "[HD]",
+    # "(Full Album)" etc.) before truncating titles for the chat log. Without
+    # this, the [:28] cap often keeps the boilerplate ("Trim - Coconut Water
+    # (Official Music Vid") and discards the actual song name. Applied
+    # iteratively because uploads commonly stack multiple suffixes such as
+    # "Song (Official Audio) [HD]". Matches at end-of-string only — leading
+    # tags like "[NEW]" are too varied to enumerate safely.
+    _NOISE_SUFFIX_RE = re.compile(
+        r"\s*[\(\[]\s*"
+        r"(?:full\s+album|album\s+version|"
+        r"official\s+(?:music\s+)?(?:video|audio|mv|visualizer)|"
+        r"(?:music|lyric|lyrics?)\s*video|"
+        r"official|audio|hd|4k|hq|visualizer|lyrics?)"
+        r"\s*[\)\]]\s*$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _clean_title(cls, title: str) -> str:
+        """Strip trailing YouTube boilerplate so chat-log titles fit on a
+        single line after the [:_LOG_TITLE_MAX] cap. Loops until stable so
+        stacked suffixes both go (e.g. `Song (Audio) [HD]` → `Song`)."""
+        out = (title or "").strip()
+        prev = None
+        while prev != out:
+            prev = out
+            out = cls._NOISE_SUFFIX_RE.sub("", out).rstrip()
+        return out or "track"
+
     def __init__(self, room_id: str, username: str, server_url: str):
         super().__init__()
         self.room_id = room_id
@@ -1090,6 +1131,10 @@ class VauxApp(App):
                     markup=True,
                     wrap=True,
                     min_width=20,
+                    # Cap retained backlog so a long-lived room doesn't grow
+                    # the in-memory log unboundedly. ~200 lines is multiple
+                    # hours of typical chat + system events.
+                    max_lines=200,
                 )
                 with Horizontal(id="chat-bar"):
                     yield Input(placeholder="say something...", id="chat-input")
@@ -1248,8 +1293,12 @@ class VauxApp(App):
 
     def _post_system(self, text: str):
         log = self.query_one("#chat-log", RichLog)
-        t = Text(text, style="dim italic")
-        log.write(t)
+        # Truncate over-long messages so a single system event can't wrap to
+        # multiple lines and crowd out chat. The `· ` prefix gives system
+        # messages their own visual lane separate from `username text` chat.
+        if len(text) > self._SYSTEM_MSG_MAX:
+            text = text[: self._SYSTEM_MSG_MAX - 1] + "…"
+        log.write(Text(f"· {text}", style="dim"))
 
     def _check_player_status(self):
         """Polls the mpv process to auto-skip when a track ends naturally or crashes."""
@@ -1289,9 +1338,23 @@ class VauxApp(App):
         )
 
         if needs_play:
+            # Captured before we mutate last_video_id below so we can
+            # distinguish "first play of a new track" from "resume after pause"
+            # (which also takes this branch since player_running flips False on
+            # pause). Only the former should announce "▶ now playing" — a
+            # resume isn't a new track from the user's perspective.
+            is_new_track = s.video_id != self.last_video_id
+            track_label = self._clean_title(s.title or "track")[: self._LOG_TITLE_MAX]
+
             stream_url = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
             if not stream_url:
+                # Stream resolution is the 5–10s gap that previously made the
+                # CLI feel unresponsive after a play/skip. The user just
+                # initiated this; the title shows up on the `▶` line below
+                # once audio actually starts, so omit it here to keep the log
+                # narrow.
+                self._post_system("⏳ loading stream…")
                 stream_url, stream_error = await get_stream_url(
                     self.server_url, s.video_id
                 )
@@ -1303,9 +1366,13 @@ class VauxApp(App):
                 self.player.play(stream_url, start=target_pos, volume=self.volume)
                 self.last_video_id = s.video_id
                 self.player_running = True
+                if is_new_track:
+                    # `▶` icon already conveys "playing" — drop the verbose
+                    # "now playing:" label so the title fits on one line.
+                    self._post_system(f"▶ {track_label}")
             else:
                 detail = f" {stream_error}" if stream_error else ""
-                self._post_system(f"Failed to load stream for track.{detail}")
+                self._post_system(f"failed to load stream.{detail}")
                 if self.is_host:
                     await self._trigger_ended()
 
@@ -1471,7 +1538,7 @@ class VauxApp(App):
                     r.thumbnail,
                     r.duration,
                 )
-                self._post_system(f"added: {r.title[:40]}")
+                self._post_system(f"added: {self._clean_title(r.title)[: self._LOG_TITLE_MAX]}")
                 lv = self.query_one("#search-results", ListView)
                 await lv.clear()
                 self.search_results = []
@@ -1526,11 +1593,16 @@ class VauxApp(App):
 
     async def action_skip_track(self):
         if not self.is_host:
-            self._post_system("Only the host can skip tracks.")
+            self._post_system("only the host can skip tracks.")
             return
         if self.playback.video_id:
+            # Chat-log entry leaves a permanent record of the skip; the
+            # transient toast separately tells the user the audio gap is
+            # expected (stream resolution for the next track takes ~5s).
+            title = self._clean_title(self.playback.title or "track")[: self._LOG_TITLE_MAX]
+            self._post_system(f"⏭  skipping: {title}")
             self.notify(
-                "Skipped track · next track loading, audio starts in ~5s…",
+                "skipped · next track loading, audio starts in ~5s…",
                 timeout=4,
             )
             await self._trigger_ended()
