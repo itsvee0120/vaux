@@ -23,6 +23,8 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/itsvee0120/vaux"
+Changelog = "https://github.com/itsvee0120/vaux/releases"
+Issues = "https://github.com/itsvee0120/vaux/issues"
 
 [project.scripts]
 vaux = "main:cli"

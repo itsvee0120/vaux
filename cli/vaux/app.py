@@ -181,6 +181,7 @@ APP_AUTHOR = "Violet Nguyen (Vee)"
 APP_WEBSITE = "https://itsvee0120.github.io/violet-website/"
 APP_GITHUB = "https://github.com/itsvee0120/vaux"
 APP_PYPI = "https://pypi.org/project/vaux-cli/"
+APP_RELEASES = f"{APP_GITHUB}/releases"
 
 
 BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
@@ -226,9 +227,10 @@ def _build_app_info(in_room: bool) -> str:
         f"Author    {APP_AUTHOR}",
         "",
         "Links",
-        f"  Website:  {APP_WEBSITE}",
-        f"  GitHub:   {APP_GITHUB}",
-        f"  PyPI:     {APP_PYPI}",
+        f"  Website:   {APP_WEBSITE}",
+        f"  GitHub:    {APP_GITHUB}",
+        f"  Releases:  {APP_RELEASES}",
+        f"  PyPI:      {APP_PYPI}",
     ]
     if in_room:
         lines.extend([
@@ -612,6 +614,10 @@ class LobbyApp(App):
     }
 
     #hint {
+        /* Stretch to the card's full width so `text-align: center` actually
+           centers — without this, Label auto-sizes to its text and the
+           centered text sits inside a left-aligned box. */
+        width: 100%;
         text-align: center;
         color: $text-muted;
         margin-top: 1;
@@ -660,7 +666,7 @@ class LobbyApp(App):
             yield Button("create & join →", id="go-btn", variant="success")
             yield Label("", id="hint")
             yield Static(
-                "audio may take 5–10s on first play or skip · syncs automatically after",
+                "Audio may take 5–10s on first play or skip · syncs automatically after",
                 id="audio-note",
             )
 
