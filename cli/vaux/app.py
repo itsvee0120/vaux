@@ -186,12 +186,7 @@ APP_RELEASES = f"{APP_GITHUB}/releases"
 
 BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
 
-# Parent tracking issue for all reported bugs. Filed reports reference it in
-# the body so (a) a back-reference appears on the parent automatically and
-# (b) maintainers can attach the new issue as a sub-issue with one click from
-# the parent's "Sub-issues" panel. GitHub has no URL parameter to create a
-# sub-issue link directly from `issues/new`, so this reference is the closest
-# equivalent.
+# Parent tracking issue for all reported bugs.
 BUG_REPORT_PARENT_ISSUE = 36
 
 
@@ -1387,28 +1382,20 @@ class VauxApp(App):
         if needs_play:
             # Captured before we mutate last_video_id below so we can
             # distinguish "first play of a new track" from "resume after pause"
-            # (which also takes this branch since player_running flips False on
-            # pause). Only the former should announce "▶ now playing" — a
+            # Only the former should announce "▶ now playing" — a
             # resume isn't a new track from the user's perspective.
             is_new_track = s.video_id != self.last_video_id
             track_label = self._clean_title(s.title or "track")[: self._LOG_TITLE_MAX]
 
             if not announce:
                 # Single concise notice on initial join, emitted before stream
-                # resolution so the message lands while audio is still
-                # buffering. Kept short so it fits a single line on the narrow
-                # right column. Replaces the granular loading/now-playing pair.
                 self._post_system("♪ syncing…")
 
             stream_url = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
             if not stream_url:
                 # Stream resolution is the 5–10s gap that previously made the
-                # CLI feel unresponsive after a play/skip. The user just
-                # initiated this; the title shows up on the `▶` line below
-                # once audio actually starts, so omit it here to keep the log
-                # narrow. Suppressed on initial join (covered by the syncing
-                # notice above).
+                # CLI feel unresponsive after a play/skip.
                 if announce:
                     self._post_system("⏳ loading stream…")
                 stream_url, stream_error = await get_stream_url(
