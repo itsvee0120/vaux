@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +23,8 @@
     "yt-dlp-wrap": "^2.3.12"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.3",
+    "vitest": "^4.1.7"
   }
 }

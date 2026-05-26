@@ -215,7 +215,9 @@ const MAX_QUEUE_LENGTH = 100;
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // delete rooms with 0 members after 10 min
 
 // Private rooms — see PRIVATE_ROOMS_SPEC.md for full design.
-const PRIVATE_ROOM_BLIP_MS = 5_000;
+// Blip TTL is env-overridable so integration tests can drive it down to
+// ~200 ms without waiting 5 s per assertion. Prod uses the 5 s default.
+const PRIVATE_ROOM_BLIP_MS = Number(process.env.PRIVATE_ROOM_BLIP_MS) || 5_000;
 const PRIVATE_ROOM_ID_REGEX = /^[A-Za-z0-9_-]{22}$/;
 const PRIVATE_LOCKOUT_AFTER = 10;
 const PRIVATE_LOCKOUT_DURATION_MS = 60_000;
@@ -1049,7 +1051,22 @@ async function initializeServer() {
   });
 }
 
-initializeServer().catch((err) => {
-  console.error("[setup] fatal:", err.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  initializeServer().catch((err) => {
+    console.error("[setup] fatal:", err.message || err);
+    process.exit(1);
+  });
+}
+
+// Tests import this module to spin up the server on an ephemeral port and
+// inspect/reset in-memory state. Never exposed over the network.
+module.exports = {
+  app,
+  server,
+  io,
+  rooms,
+  privateRoomLockouts,
+  PRIVATE_ROOM_BLIP_MS,
+  PRIVATE_LOCKOUT_AFTER,
+  PRIVATE_LOCKOUT_DURATION_MS,
+};
