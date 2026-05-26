@@ -1510,8 +1510,12 @@ class VauxApp(App):
             suffix = " · 🔒 chat E2E" if self.is_private else ""
             self._post_system(f"joined [{self.role}]{suffix}")
             if self.is_private:
-                self._post_system(
-                    "chat is encrypted — queue/playback are not"
+                # System log is ~18 cells wide and RichLog auto-wraps a long
+                # disclaimer into 3-4 ragged lines. Use a transient toast so
+                # the warning is seen once without eating permanent space.
+                self.notify(
+                    "chat is end-to-end encrypted — queue & playback are not",
+                    timeout=8,
                 )
             await self._apply_playback(announce=False)
             if not getattr(self, "player", None):
