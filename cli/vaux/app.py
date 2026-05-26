@@ -1184,8 +1184,10 @@ class VauxApp(App):
             self._refresh_now_playing()
             self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
             self._update_header_subtitle()
-            await self._apply_playback()
+            # `joined` first so the user sees their join confirmation before
+            # the syncing notice that _apply_playback may emit.
             self._post_system(f"joined [{self.role}]")
+            await self._apply_playback(announce=False)
             if not getattr(self, "player", None):
                 self._post_system("mpv not found on system. Please install mpv to hear audio.")
         finally:
@@ -1238,7 +1240,18 @@ class VauxApp(App):
         await self._refresh_queue()
 
     async def _on_playback_state(self, data: dict):
+        # Capture the previous track id BEFORE we overwrite playback so we
+        # can fire a transient toast on actual track changes (vs play/pause/
+        # seek, which keep the same videoId). Initial state lands in
+        # _on_room_joined, not here, so listeners won't get a redundant
+        # toast at room-entry time.
+        old_video_id = self.playback.video_id
         self.playback = PlaybackState.from_dict(data)
+
+        if self.playback.video_id and self.playback.video_id != old_video_id:
+            title = self._clean_title(self.playback.title or "track")[: self._LOG_TITLE_MAX]
+            self.notify(f"♪ {title}", timeout=4)
+
         self._refresh_now_playing()
         await self._apply_playback()
 
@@ -1309,8 +1322,17 @@ class VauxApp(App):
             self.player_running = False
             asyncio.create_task(self._trigger_ended())
 
-    async def _apply_playback(self):
-        """Syncs the python-mpv player instance with the server playback state."""
+    async def _apply_playback(self, *, announce: bool = True):
+        """Syncs the python-mpv player instance with the server playback state.
+
+        `announce=False` is used on the initial-join path to suppress the
+        per-event `⏳ loading stream…` and `▶ {title}` chat lines, which
+        would otherwise look like the user just triggered playback. A single
+        `♪ music playing, syncing…` notice is emitted instead so the listener
+        knows audio is buffering. Errors are NOT gated by announce — if the
+        stream fails on join, the listener still needs to see why audio
+        never starts.
+        """
         if not getattr(self, "player", None):
             return
 
@@ -1346,6 +1368,13 @@ class VauxApp(App):
             is_new_track = s.video_id != self.last_video_id
             track_label = self._clean_title(s.title or "track")[: self._LOG_TITLE_MAX]
 
+            if not announce:
+                # Single concise notice on initial join, emitted before stream
+                # resolution so the message lands while audio is still
+                # buffering. Kept short so it fits a single line on the narrow
+                # right column. Replaces the granular loading/now-playing pair.
+                self._post_system("♪ syncing…")
+
             stream_url = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
             if not stream_url:
@@ -1353,8 +1382,10 @@ class VauxApp(App):
                 # CLI feel unresponsive after a play/skip. The user just
                 # initiated this; the title shows up on the `▶` line below
                 # once audio actually starts, so omit it here to keep the log
-                # narrow.
-                self._post_system("⏳ loading stream…")
+                # narrow. Suppressed on initial join (covered by the syncing
+                # notice above).
+                if announce:
+                    self._post_system("⏳ loading stream…")
                 stream_url, stream_error = await get_stream_url(
                     self.server_url, s.video_id
                 )
@@ -1366,7 +1397,7 @@ class VauxApp(App):
                 self.player.play(stream_url, start=target_pos, volume=self.volume)
                 self.last_video_id = s.video_id
                 self.player_running = True
-                if is_new_track:
+                if is_new_track and announce:
                     # `▶` icon already conveys "playing" — drop the verbose
                     # "now playing:" label so the title fits on one line.
                     self._post_system(f"▶ {track_label}")
