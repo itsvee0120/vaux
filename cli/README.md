@@ -9,8 +9,14 @@ A terminal client for [Vaux](https://github.com/itsvee0120/vaux) listening rooms
 Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/itsvee0120/vaux/main/assets/vaux_cli.png" alt="Vaux CLI lobby preview" width="640" />
+  <img src="https://raw.githubusercontent.com/itsvee0120/vaux/main/assets/vaux_lobby_cli.png" alt="Vaux CLI lobby preview" width="640" />
 </p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/itsvee0120/vaux/main/assets/vaux_room.png" alt="Vaux CLI room preview" width="640" />
+</p>
+
+---
 
 ## Features
 
@@ -70,25 +76,25 @@ vaux --server http://localhost:4000 my-room -u yourname
 
 ### In a room
 
-| Key         | Action                                       |
-| ----------- | -------------------------------------------- |
-| `Ctrl+S`    | Focus search                                 |
-| `Ctrl+R`    | Clear search results                         |
-| `Ctrl+T`    | Focus chat                                   |
-| `↑` / `↓`   | Chat history (chat input focused)            |
-| `Ctrl+O`    | Play / pause (host)                          |
-| `Ctrl+N`    | Skip track (host)                            |
-| `x` / `Del` | Remove queue item (host, queue focused)      |
-| `Ctrl+U`    | Vote up selected track                       |
-| `Ctrl+D`    | Vote down selected track                     |
-| `-` / `=`   | Volume down / up                             |
-| `m`         | Mute / unmute                                |
-| `Ctrl+K`    | Copy room name to clipboard                  |
-| `Ctrl+L`    | Listeners & transfer host (host)             |
-| `Ctrl+G`    | Info (version, links, shortcuts)             |
-| `Ctrl+B`    | Report a bug (Google Form / GitHub)          |
-| `Ctrl+P`    | Command palette (save screenshot, etc.)      |
-| `Ctrl+C`    | Quit                                         |
+| Key         | Action                                  |
+| ----------- | --------------------------------------- |
+| `Ctrl+S`    | Focus search                            |
+| `Ctrl+R`    | Clear search results                    |
+| `Ctrl+T`    | Focus chat                              |
+| `↑` / `↓`   | Chat history (chat input focused)       |
+| `Ctrl+O`    | Play / pause (host)                     |
+| `Ctrl+N`    | Skip track (host)                       |
+| `x` / `Del` | Remove queue item (host, queue focused) |
+| `Ctrl+U`    | Vote up selected track                  |
+| `Ctrl+D`    | Vote down selected track                |
+| `-` / `=`   | Volume down / up                        |
+| `m`         | Mute / unmute                           |
+| `Ctrl+K`    | Copy room name to clipboard             |
+| `Ctrl+L`    | Listeners & transfer host (host)        |
+| `Ctrl+G`    | Info (version, links, shortcuts)        |
+| `Ctrl+B`    | Report a bug (Google Form / GitHub)     |
+| `Ctrl+P`    | Command palette (save screenshot, etc.) |
+| `Ctrl+C`    | Quit                                    |
 
 Type `/host <username>` in chat to transfer host to another listener.
 
@@ -104,9 +110,9 @@ Type `/host <username>` in chat to transfer host to another listener.
 
 ### Modal overlays
 
-| Key     | Action                                              |
-| ------- | --------------------------------------------------- |
-| `Esc`   | Close current overlay (Info / Bug / Listeners)      |
+| Key   | Action                                         |
+| ----- | ---------------------------------------------- |
+| `Esc` | Close current overlay (Info / Bug / Listeners) |
 
 ## Streaming notes
 

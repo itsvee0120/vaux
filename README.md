@@ -10,6 +10,8 @@ A real-time music listening room - join a room, build a queue together, vote on 
 
 ### Vaux on CLI - 🐍 Latest Version on Pypi: https://pypi.org/project/vaux-cli/
 
+**What's new:** see the [release notes](https://github.com/itsvee0120/vaux/releases) for changes between versions. Click "Watch → Releases only" on the GitHub repo to get notified when a new version ships.
+
 
 https://github.com/user-attachments/assets/ae3808a2-98e7-4c24-af91-6adc98b5a966
 
@@ -188,8 +190,10 @@ vaux <room-id> -u <your-name>
 | `Ctrl+L`    | Listeners & transfer host (host)             |
 | `Ctrl+G`    | Info (version, links, shortcuts)             |
 | `Ctrl+B`    | Report a bug (Google Form / GitHub)          |
-| `Ctrl+P`    | Command palette (save screenshot, etc.)      |
+| `Ctrl+P`    | Command palette — save screenshot, **change theme**, etc. |
 | `Ctrl+C`    | Quit                                         |
+
+> Theme: vaux defaults to whichever Textual theme your terminal prefers. Open `Ctrl+P → Change theme` to pick another (dracula, nord, gruvbox, tokyo-night, monokai, catppuccin variants, etc.). The choice applies for the current session.
 
 ---
 
@@ -350,6 +354,22 @@ Omit `--server` only when you intend to use the public hosted server.
 - [ ] AI playlist seeding
 - [ ] Persistent PostgreSQL storage
 - [x] Installable CLI via `pip install vaux-cli`
+
+---
+
+## Releases & changelog
+
+Every released version has notes on the GitHub Releases page:
+
+**[github.com/itsvee0120/vaux/releases](https://github.com/itsvee0120/vaux/releases)**
+
+That's the source of truth for what changed and when. The page is reachable from inside the CLI as well — press `Ctrl+G` to open the Info modal and follow the **Releases** link.
+
+To get notified when a new version drops:
+1. Visit the repo on GitHub.
+2. Click **Watch → Custom → Releases**.
+
+PyPI users can also see the version history at [pypi.org/project/vaux-cli](https://pypi.org/project/vaux-cli/), with the **Changelog** sidebar link pointing back to the same Releases page.
 
 ---
 

@@ -17,6 +17,7 @@ Layout (single screen):
 
 import asyncio
 import os
+import re
 import sys
 import json
 import socket
@@ -180,9 +181,13 @@ APP_AUTHOR = "Violet Nguyen (Vee)"
 APP_WEBSITE = "https://itsvee0120.github.io/violet-website/"
 APP_GITHUB = "https://github.com/itsvee0120/vaux"
 APP_PYPI = "https://pypi.org/project/vaux-cli/"
+APP_RELEASES = f"{APP_GITHUB}/releases"
 
 
 BUG_REPORT_GOOGLE_FORM_URL = "https://forms.gle/VrwxwGgHUMLNPSfQA"
+
+# Parent tracking issue for all reported bugs.
+BUG_REPORT_PARENT_ISSUE = 36
 
 
 def build_github_issue_url(in_room: bool) -> str:
@@ -191,6 +196,9 @@ def build_github_issue_url(in_room: bool) -> str:
     import urllib.parse
 
     body = (
+        f"Parent issue: {APP_GITHUB}/issues/{BUG_REPORT_PARENT_ISSUE}\n"
+        "<!-- maintainer: please link this report as a sub-issue of "
+        f"#{BUG_REPORT_PARENT_ISSUE} via the parent's Sub-issues panel. -->\n\n"
         "## What happened?\n\n\n"
         "## Steps to reproduce\n1. \n2. \n3. \n\n"
         "## Expected behavior\n\n\n"
@@ -214,9 +222,10 @@ def _build_app_info(in_room: bool) -> str:
         f"Author    {APP_AUTHOR}",
         "",
         "Links",
-        f"  Website:  {APP_WEBSITE}",
-        f"  GitHub:   {APP_GITHUB}",
-        f"  PyPI:     {APP_PYPI}",
+        f"  Website:   {APP_WEBSITE}",
+        f"  GitHub:    {APP_GITHUB}",
+        f"  Releases:  {APP_RELEASES}",
+        f"  PyPI:      {APP_PYPI}",
     ]
     if in_room:
         lines.extend([
@@ -239,7 +248,7 @@ def _build_app_info(in_room: bool) -> str:
             "  ctrl+b   report a bug",
             "  ctrl+p   command palette (save screenshot, etc.)",
             "  ctrl+c   quit",
-            "  type /host <username> to transfer host to another user",
+            "  type '/host <username>' to transfer host",
         ])
     else:
         lines.extend([
@@ -516,8 +525,6 @@ class ListenersModal(ModalScreen[None]):
 class LobbyApp(App):
     """Pre-game lobby: create a room (slug) or join an existing one."""
 
-    theme = "dracula"
-
     CSS = """
     Screen {
         align: center middle;
@@ -602,6 +609,10 @@ class LobbyApp(App):
     }
 
     #hint {
+        /* Stretch to the card's full width so `text-align: center` actually
+           centers — without this, Label auto-sizes to its text and the
+           centered text sits inside a left-aligned box. */
+        width: 100%;
         text-align: center;
         color: $text-muted;
         margin-top: 1;
@@ -650,7 +661,7 @@ class LobbyApp(App):
             yield Button("create & join →", id="go-btn", variant="success")
             yield Label("", id="hint")
             yield Static(
-                "audio may take 5–10s on first play or skip · syncs automatically after",
+                "Audio may take 5–10s on first play or skip · syncs automatically after",
                 id="audio-note",
             )
 
@@ -920,7 +931,6 @@ class SearchResultItem(ListItem):
 
 # ── VauxApp ────────────────────────────────────────────────────────────────
 class VauxApp(App):
-    theme = "dracula"
 
     CSS = """
     Screen {
@@ -970,6 +980,14 @@ class VauxApp(App):
         color: $success;
     }
 
+    /* Compact status feed sits between now-playing and chat. Fixed at 5
+       cells so the bulk of the right column belongs to chat — system events
+       scroll out of view here while chat history stays long. */
+    #system-log {
+        height: 5;
+        border-bottom: solid $primary-darken-2;
+    }
+
     #chat-log {
         height: 1fr;
     }
@@ -1017,6 +1035,46 @@ class VauxApp(App):
         Binding("m", "toggle_mute", "Mute", show=False),
         Binding("ctrl+k", "copy_room", "Copy room", show=False),
     ]
+
+    # Cap on system-message length before truncating with an ellipsis. Sized to
+    # comfortably fit on the 50-cell right column with the `· ` prefix and dim
+    # styling, while still letting genuine error strings (e.g. mpv-not-found,
+    # stream-resolution failures) keep their actionable second half.
+    _SYSTEM_MSG_MAX = 120
+
+    # Tighter cap for *titles inside* system messages (now-playing, skipping,
+    # added). 50-cell column - "· " - "▶ " ≈ 46, but with the trailing
+    # ellipsis and emoji width variance, 28 keeps single-line on most terminals.
+    _LOG_TITLE_MAX = 28
+
+    # Strip trailing YouTube boilerplate ("(Official Music Video)", "[HD]",
+    # "(Full Album)" etc.) before truncating titles for the chat log. Without
+    # this, the [:28] cap often keeps the boilerplate ("Trim - Coconut Water
+    # (Official Music Vid") and discards the actual song name. Applied
+    # iteratively because uploads commonly stack multiple suffixes such as
+    # "Song (Official Audio) [HD]". Matches at end-of-string only — leading
+    # tags like "[NEW]" are too varied to enumerate safely.
+    _NOISE_SUFFIX_RE = re.compile(
+        r"\s*[\(\[]\s*"
+        r"(?:full\s+album|album\s+version|"
+        r"official\s+(?:music\s+)?(?:video|audio|mv|visualizer)|"
+        r"(?:music|lyric|lyrics?)\s*video|"
+        r"official|audio|hd|4k|hq|visualizer|lyrics?)"
+        r"\s*[\)\]]\s*$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _clean_title(cls, title: str) -> str:
+        """Strip trailing YouTube boilerplate so chat-log titles fit on a
+        single line after the [:_LOG_TITLE_MAX] cap. Loops until stable so
+        stacked suffixes both go (e.g. `Song (Audio) [HD]` → `Song`)."""
+        out = (title or "").strip()
+        prev = None
+        while prev != out:
+            prev = out
+            out = cls._NOISE_SUFFIX_RE.sub("", out).rstrip()
+        return out or "track"
 
     def __init__(self, room_id: str, username: str, server_url: str):
         super().__init__()
@@ -1070,15 +1128,34 @@ class VauxApp(App):
                     yield Input(placeholder="search youtube...", id="search-input")
                     yield Button("Search", id="search-btn", variant="primary")
 
-            # right: now playing + chat
+            # right: now playing + system + chat
             with Vertical(id="right"):
                 yield NowPlaying(id="now-playing")
+                # Dedicated status log for self-posts (loading, skipping,
+                # joins/leaves, paused/resumed). Lives above chat so chat
+                # stays uninterrupted by system noise. RichLog auto-scrolls
+                # by default, so newer events always end up visible.
+                yield RichLog(
+                    id="system-log",
+                    highlight=False,
+                    markup=False,
+                    wrap=True,
+                    min_width=20,
+                    # Smaller cap than chat — system messages are noise that
+                    # ages out fast; nobody scrolls back through them.
+                    max_lines=50,
+                    auto_scroll=True,
+                )
                 yield RichLog(
                     id="chat-log",
                     highlight=True,
                     markup=True,
                     wrap=True,
                     min_width=20,
+                    # Cap retained backlog so a long-lived room doesn't grow
+                    # the in-memory log unboundedly. ~200 lines is multiple
+                    # hours of typical chat + system events.
+                    max_lines=200,
                 )
                 with Horizontal(id="chat-bar"):
                     yield Input(placeholder="say something...", id="chat-input")
@@ -1128,8 +1205,10 @@ class VauxApp(App):
             self._refresh_now_playing()
             self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
             self._update_header_subtitle()
-            await self._apply_playback()
+            # `joined` first so the user sees their join confirmation before
+            # the syncing notice that _apply_playback may emit.
             self._post_system(f"joined [{self.role}]")
+            await self._apply_playback(announce=False)
             if not getattr(self, "player", None):
                 self._post_system("mpv not found on system. Please install mpv to hear audio.")
         finally:
@@ -1182,7 +1261,18 @@ class VauxApp(App):
         await self._refresh_queue()
 
     async def _on_playback_state(self, data: dict):
+        # Capture the previous track id BEFORE we overwrite playback so we
+        # can fire a transient toast on actual track changes (vs play/pause/
+        # seek, which keep the same videoId). Initial state lands in
+        # _on_room_joined, not here, so listeners won't get a redundant
+        # toast at room-entry time.
+        old_video_id = self.playback.video_id
         self.playback = PlaybackState.from_dict(data)
+
+        if self.playback.video_id and self.playback.video_id != old_video_id:
+            title = self._clean_title(self.playback.title or "track")[: self._LOG_TITLE_MAX]
+            self.notify(f"♪ {title}", timeout=4)
+
         self._refresh_now_playing()
         await self._apply_playback()
 
@@ -1236,9 +1326,12 @@ class VauxApp(App):
         log.write(t)
 
     def _post_system(self, text: str):
-        log = self.query_one("#chat-log", RichLog)
-        t = Text(text, style="dim italic")
-        log.write(t)
+        log = self.query_one("#system-log", RichLog)
+        # Truncate over-long messages so a single system event can't wrap to
+        # multiple lines and consume too much of the small log area.
+        if len(text) > self._SYSTEM_MSG_MAX:
+            text = text[: self._SYSTEM_MSG_MAX - 1] + "…"
+        log.write(Text(text, style="dim"))
 
     def _check_player_status(self):
         """Polls the mpv process to auto-skip when a track ends naturally or crashes."""
@@ -1249,8 +1342,17 @@ class VauxApp(App):
             self.player_running = False
             asyncio.create_task(self._trigger_ended())
 
-    async def _apply_playback(self):
-        """Syncs the python-mpv player instance with the server playback state."""
+    async def _apply_playback(self, *, announce: bool = True):
+        """Syncs the python-mpv player instance with the server playback state.
+
+        `announce=False` is used on the initial-join path to suppress the
+        per-event `⏳ loading stream…` and `▶ {title}` chat lines, which
+        would otherwise look like the user just triggered playback. A single
+        `♪ music playing, syncing…` notice is emitted instead so the listener
+        knows audio is buffering. Errors are NOT gated by announce — if the
+        stream fails on join, the listener still needs to see why audio
+        never starts.
+        """
         if not getattr(self, "player", None):
             return
 
@@ -1278,9 +1380,24 @@ class VauxApp(App):
         )
 
         if needs_play:
+            # Captured before we mutate last_video_id below so we can
+            # distinguish "first play of a new track" from "resume after pause"
+            # Only the former should announce "▶ now playing" — a
+            # resume isn't a new track from the user's perspective.
+            is_new_track = s.video_id != self.last_video_id
+            track_label = self._clean_title(s.title or "track")[: self._LOG_TITLE_MAX]
+
+            if not announce:
+                # Single concise notice on initial join, emitted before stream
+                self._post_system("♪ syncing…")
+
             stream_url = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
             if not stream_url:
+                # Stream resolution is the 5–10s gap that previously made the
+                # CLI feel unresponsive after a play/skip.
+                if announce:
+                    self._post_system("⏳ loading stream…")
                 stream_url, stream_error = await get_stream_url(
                     self.server_url, s.video_id
                 )
@@ -1292,9 +1409,13 @@ class VauxApp(App):
                 self.player.play(stream_url, start=target_pos, volume=self.volume)
                 self.last_video_id = s.video_id
                 self.player_running = True
+                if is_new_track and announce:
+                    # `▶` icon already conveys "playing" — drop the verbose
+                    # "now playing:" label so the title fits on one line.
+                    self._post_system(f"▶ {track_label}")
             else:
                 detail = f" {stream_error}" if stream_error else ""
-                self._post_system(f"Failed to load stream for track.{detail}")
+                self._post_system(f"failed to load stream.{detail}")
                 if self.is_host:
                     await self._trigger_ended()
 
@@ -1460,7 +1581,7 @@ class VauxApp(App):
                     r.thumbnail,
                     r.duration,
                 )
-                self._post_system(f"added: {r.title[:40]}")
+                self._post_system(f"added: {self._clean_title(r.title)[: self._LOG_TITLE_MAX]}")
                 lv = self.query_one("#search-results", ListView)
                 await lv.clear()
                 self.search_results = []
@@ -1515,11 +1636,16 @@ class VauxApp(App):
 
     async def action_skip_track(self):
         if not self.is_host:
-            self._post_system("Only the host can skip tracks.")
+            self._post_system("only the host can skip tracks.")
             return
         if self.playback.video_id:
+            # Chat-log entry leaves a permanent record of the skip; the
+            # transient toast separately tells the user the audio gap is
+            # expected (stream resolution for the next track takes ~5s).
+            title = self._clean_title(self.playback.title or "track")[: self._LOG_TITLE_MAX]
+            self._post_system(f"⏭  skipping: {title}")
             self.notify(
-                "Skipped track · next track loading, audio starts in ~5s…",
+                "skipped · next track loading, audio starts in ~5s…",
                 timeout=4,
             )
             await self._trigger_ended()
