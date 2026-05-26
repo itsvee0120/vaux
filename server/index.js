@@ -11,9 +11,25 @@ const path = require("path");
 const YTDlpWrap = require("yt-dlp-wrap").default || require("yt-dlp-wrap");
 let ytdlp = new YTDlpWrap();
 
-/** Modern YouTube extraction needs a JS runtime and EJS challenge scripts. */
+// Modern YouTube extraction needs a JS runtime and EJS challenge scripts.
+//
+// The player_client fallback chain matters when running from datacenter IPs
+// (Render, Fly, etc.) because YouTube's bot challenge is non-deterministic and
+// triggers more aggressively for the default web client than for tv/safari/mweb
+// surfaces. yt-dlp tries each client in order until one returns a usable
+// stream, so a transient gate on the default client doesn't reach our caller.
+// Order is "least-gated first" per yt-dlp community reports for cloud IPs;
+// rotate if YouTube's gating shifts. Cookies/PO-tokens are heavier escalations
+// (account-ban risk, secret rotation) deferred until this stops being enough.
 function ytdlpBaseArgs() {
-  return ["--js-runtimes", "node", "--remote-components", "ejs:github"];
+  return [
+    "--js-runtimes",
+    "node",
+    "--remote-components",
+    "ejs:github",
+    "--extractor-args",
+    "youtube:player_client=tv,web_safari,mweb,default",
+  ];
 }
 
 const app = express();
@@ -145,7 +161,12 @@ async function resolveStreamUrl(videoId) {
     ]);
     return stdout.trim().split(/\r?\n/).find(Boolean) || null;
   } catch (err) {
-    console.warn("[youtube] stream extraction failed:", err.message || err);
+    // Include videoId so the Render logs can distinguish per-video failures
+    // (region locks, age gates, deleted videos) from scattered bot-gate noise.
+    console.warn("[youtube] stream extraction failed:", {
+      videoId,
+      message: err.message || String(err),
+    });
     return null;
   }
 }
