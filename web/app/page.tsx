@@ -129,6 +129,8 @@ export default function Home() {
   const memberNamesRef = useRef<Map<string, string>>(new Map());
   /** Prevent duplicate "X left" system log spam. */
   const leftAnnouncedRef = useRef<Map<string, number>>(new Map());
+  const roomEndedRef = useRef(false);
+  const disconnectWarnedRef = useRef(false);
 
   const restoring =
     hydrated && session !== null && screen === "lobby" && !rejoinFailed;
@@ -187,6 +189,8 @@ export default function Home() {
       setPlayback(playbackState ?? EMPTY_PLAYBACK);
       setIsHost(role === "host");
       setIsPrivate(isPriv);
+      roomEndedRef.current = false;
+      disconnectWarnedRef.current = false;
 
       if (isPriv) {
         // Decrypt every member's name before showing the room. Any member
@@ -322,6 +326,33 @@ export default function Home() {
       setQueue(q),
     );
     socket.on("playback:state", (state: PlaybackState) => setPlayback(state));
+    socket.on(
+      "room:ended",
+      ({ reason }: { reason?: string }) => {
+        roomEndedRef.current = true;
+        const msg =
+          reason === "host_left_without_transfer"
+            ? "Host left without transfer — room closed."
+            : "Room closed.";
+        setMessages((p) => [...p, { username: "", text: msg, system: true }]);
+        setJoinError(msg);
+        setTimeout(() => {
+          const socket = getSocket();
+          if (socket.connected) socket.disconnect();
+          clearSession();
+          privateRef.current = null;
+          memberNamesRef.current = new Map();
+          myUserIdRef.current = "";
+          setScreen("lobby");
+          setRoomId("");
+          setIsPrivate(false);
+          setQueue([]);
+          setMembers([]);
+          setPlayback(EMPTY_PLAYBACK);
+          setIsHost(false);
+        }, 300);
+      },
+    );
 
     socket.on(
       "chat:message",
@@ -429,6 +460,7 @@ export default function Home() {
       socket.off("host:changed");
       socket.off("queue:updated");
       socket.off("playback:state");
+      socket.off("room:ended");
       socket.off("chat:message");
       socket.off("chat:rate_limited");
       socket.off("queue:full");
@@ -478,6 +510,8 @@ export default function Home() {
 
   const emitPlay = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:play", { roomId, positionSeconds });
     },
     [roomId],
@@ -485,6 +519,8 @@ export default function Home() {
 
   const emitPause = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:pause", { roomId, positionSeconds });
     },
     [roomId],
@@ -492,14 +528,36 @@ export default function Home() {
 
   const emitSeek = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:seek", { roomId, positionSeconds });
     },
     [roomId],
   );
 
   const emitEnded = useCallback(() => {
+    if (roomEndedRef.current) return;
+    if (!getSocket().connected) return;
     getSocket().emit("playback:ended", { roomId });
   }, [roomId]);
+
+  function canEmitRoomAction(): boolean {
+    if (roomEndedRef.current) return false;
+    const socket = getSocket();
+    if (socket.connected) return true;
+    if (!disconnectWarnedRef.current) {
+      disconnectWarnedRef.current = true;
+      setMessages((p) => [
+        ...p,
+        {
+          username: "",
+          text: "Disconnected from room — please rejoin.",
+          system: true,
+        },
+      ]);
+    }
+    return false;
+  }
 
   function joinRoom(roomIdOverride?: string) {
     const rid = (roomIdOverride ?? roomId).trim();
@@ -576,28 +634,33 @@ export default function Home() {
   }
 
   function addToQueue(result: SearchResult) {
+    if (!canEmitRoomAction()) return;
     getSocket().emit("queue:add", { roomId, ...result });
     setSearchResults([]);
     setSearchQuery("");
   }
 
   function vote(itemId: string, value: 1 | -1) {
+    if (!canEmitRoomAction()) return;
     const track = queue.find((t) => t.id === itemId);
     if (value === -1 && (track?.votes ?? 0) < 1) return;
     getSocket().emit("queue:vote", { roomId, itemId, value });
   }
 
   function playTrack(track: Track) {
+    if (!canEmitRoomAction()) return;
     if (!isHost) return;
     getSocket().emit("playback:play_track", { roomId, itemId: track.id });
   }
 
   function removeFromQueue(itemId: string) {
+    if (!canEmitRoomAction()) return;
     if (!isHost) return;
     getSocket().emit("queue:remove", { roomId, itemId });
   }
 
   function sendChat() {
+    if (!canEmitRoomAction()) return;
     const text = chatInput.trim();
     if (!text) return;
     const material = privateRef.current;
@@ -616,6 +679,7 @@ export default function Home() {
   }
 
   function transferHost(newHostId: string) {
+    if (!canEmitRoomAction()) return;
     getSocket().emit("host:transfer", { roomId, newHostId });
   }
 

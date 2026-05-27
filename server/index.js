@@ -847,6 +847,10 @@ io.on("connection", (socket) => {
     if (!room || !room.private) return;
     if (!isHost(socket, room)) return;
     cancelCleanupTimer(room);
+    io.to(roomId).emit("room:ended", {
+      reason: "host_left_without_transfer",
+      roomId,
+    });
     io.in(roomId).disconnectSockets(true);
     delete rooms[roomId];
     logPrivate("room destroyed by host");

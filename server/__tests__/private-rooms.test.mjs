@@ -467,23 +467,37 @@ describe("private room: room:destroy authz", () => {
 
   it("host emit deletes the room immediately", async () => {
     const roomId = freshRoomId();
+    const proof = freshAuthProof();
     const host = connect();
     await waitForConnect(host);
     host.emit("room:join", {
       roomId,
       username: freshCipher(),
-      authProof: freshAuthProof(),
+      authProof: proof,
       create: true,
     });
     await once(host, "room:joined");
     expect(rooms[roomId]).toBeTruthy();
 
+    const listener = connect();
+    await waitForConnect(listener);
+    listener.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+    });
+    await once(listener, "room:joined");
+
+    const endedPromise = once(listener, "room:ended");
     host.emit("room:destroy", { roomId });
+    const ended = await endedPromise;
+    expect(ended.reason).toBe("host_left_without_transfer");
 
     // Per spec the burn is immediate — give a tick for the handler to run.
     await new Promise((r) => setTimeout(r, 50));
     expect(rooms[roomId]).toBeUndefined();
 
     host.disconnect();
+    listener.disconnect();
   }, 5000);
 });
