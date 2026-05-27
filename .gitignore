@@ -22,6 +22,11 @@ cli/vendor/mpv/*.com
 .DS_Store
 .DS_Store?
 
+# Internal working specs (not user-facing docs)
+PRIVATE_ROOMS_SPEC.md
+NOTES.md
+AGENT.md
+
 # npm / yarn logs
 npm-debug.log*
 yarn-debug.log*

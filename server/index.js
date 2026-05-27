@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 const fs = require("fs");
 const path = require("path");
+const argon2 = require("argon2");
 
 const YTDlpWrap = require("yt-dlp-wrap").default || require("yt-dlp-wrap");
 let ytdlp = new YTDlpWrap();
@@ -213,6 +214,100 @@ const MAX_MEMBERS_PER_ROOM = 50;
 const MAX_QUEUE_LENGTH = 100;
 const EMPTY_ROOM_TTL_MS = 10 * 60 * 1000; // delete rooms with 0 members after 10 min
 
+// Private rooms — see PRIVATE_ROOMS_SPEC.md for full design.
+// Blip TTL is env-overridable so integration tests can drive it down to
+// ~200 ms without waiting 5 s per assertion. Prod uses the 5 s default.
+const PRIVATE_ROOM_BLIP_MS = Number(process.env.PRIVATE_ROOM_BLIP_MS) || 5_000;
+const PRIVATE_ROOM_ID_REGEX = /^[A-Za-z0-9_-]{22}$/;
+const PRIVATE_LOCKOUT_AFTER = 10;
+const PRIVATE_LOCKOUT_DURATION_MS = 60_000;
+const PRIVATE_LOCKOUT_GC_INTERVAL_MS = 5 * 60_000;
+const PRIVATE_LOCKOUT_GC_AFTER_MS = 60 * 60_000;
+const PRIVATE_LOCKOUT_MAP_MAX = 50_000;
+const PRIVATE_AUTH_PROOF_BYTES = 32;
+
+const IS_DEV = process.env.NODE_ENV !== "production";
+const LOG_PRIVATE = process.env.LOG_PRIVATE_ROOMS === "true" || IS_DEV;
+function logPrivate(...args) {
+  if (LOG_PRIVATE) console.log("[private]", ...args);
+}
+
+const privateRoomLockouts = new Map();
+
+function recordFailedAttempt(roomId) {
+  const now = Date.now();
+  let entry = privateRoomLockouts.get(roomId);
+  if (!entry) {
+    if (privateRoomLockouts.size >= PRIVATE_LOCKOUT_MAP_MAX) {
+      evictOldestLockouts();
+    }
+    entry = { failedAttempts: 0, lockedUntil: 0, lastTouchedMs: now };
+    privateRoomLockouts.set(roomId, entry);
+  }
+  entry.failedAttempts += 1;
+  entry.lastTouchedMs = now;
+  if (entry.failedAttempts >= PRIVATE_LOCKOUT_AFTER) {
+    entry.lockedUntil = now + PRIVATE_LOCKOUT_DURATION_MS;
+  }
+  return entry;
+}
+
+function clearLockout(roomId) {
+  privateRoomLockouts.delete(roomId);
+}
+
+function checkLockout(roomId) {
+  const entry = privateRoomLockouts.get(roomId);
+  if (!entry) return null;
+  const remaining = entry.lockedUntil - Date.now();
+  return remaining > 0 ? remaining : null;
+}
+
+function evictOldestLockouts() {
+  const evictCount = Math.max(1, Math.floor(PRIVATE_LOCKOUT_MAP_MAX / 10));
+  const sorted = [...privateRoomLockouts.entries()].sort(
+    (a, b) => a[1].lastTouchedMs - b[1].lastTouchedMs,
+  );
+  for (let i = 0; i < evictCount && i < sorted.length; i++) {
+    privateRoomLockouts.delete(sorted[i][0]);
+  }
+}
+
+setInterval(() => {
+  const now = Date.now();
+  const idleCutoff = now - PRIVATE_LOCKOUT_GC_AFTER_MS;
+  for (const [roomId, entry] of privateRoomLockouts) {
+    if (entry.lockedUntil < now && entry.lastTouchedMs < idleCutoff) {
+      privateRoomLockouts.delete(roomId);
+    }
+  }
+}, PRIVATE_LOCKOUT_GC_INTERVAL_MS).unref();
+
+function decodeAuthProof(authProofB64) {
+  if (typeof authProofB64 !== "string") return null;
+  try {
+    const buf = Buffer.from(authProofB64, "base64");
+    if (buf.length !== PRIVATE_AUTH_PROOF_BYTES) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+const CIPHER_FIELD_MAX_CHARS = 200;
+
+// Private-room display names are sent as { ct, nonce } encrypted under
+// chatKey. Server never looks inside — just bounds-checks the strings to
+// stop a misbehaving client from emitting a 1MB "username".
+function validateUsernameCipher(value) {
+  if (!value || typeof value !== "object") return null;
+  const { ct, nonce } = value;
+  if (typeof ct !== "string" || typeof nonce !== "string") return null;
+  if (!ct || ct.length > CIPHER_FIELD_MAX_CHARS) return null;
+  if (!nonce || nonce.length > CIPHER_FIELD_MAX_CHARS) return null;
+  return { ct, nonce };
+}
+
 // Track metadata bounds. Server controls thumbnails entirely to prevent
 // tracking-pixel attacks (client supplies a URL pointing at attacker.com,
 // and every other room member's browser fetches it on render, leaking IPs).
@@ -221,6 +316,13 @@ const YT_VIDEO_ID_REGEX = /^[A-Za-z0-9_-]{11}$/;
 const MAX_TITLE_LEN = 200;
 const MAX_CHANNEL_LEN = 100;
 const MAX_DURATION_SEC = 24 * 60 * 60; // 24h — anything longer is bogus
+
+// Public-room id format. Rejects unicode/emoji/path-traversal junk that would
+// otherwise let a bot fill the MAX_ROOMS cap with garbage keys. Matches every
+// slug from generateRoomSlug() (verified) and accepts any lowercase
+// `[a-z0-9-]` name a human is likely to type. Lowercase-only is intentional
+// — keeps "myroom" and "MyRoom" from fragmenting into two rooms.
+const PUBLIC_ROOM_ID_REGEX = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/;
 
 function thumbnailFor(videoId) {
   // Always YouTube's own CDN. No client URLs ever stored in queue items.
@@ -245,11 +347,13 @@ function getRoom(roomId) {
   return rooms[roomId];
 }
 
-// Creates a room if missing, enforcing the room-count cap. Only called from
-// room:join. Returns null if the server is at the room cap.
+// Creates a public room if missing, enforcing the room-count cap. Only
+// called from the public room:join path. Private rooms are created via
+// createPrivateRoom (see below) so we never accidentally cancel a private
+// room's blip timer for an unauthenticated socket.
 function getOrCreateRoom(roomId) {
   if (rooms[roomId]) {
-    // Reviving an empty room — cancel any pending cleanup.
+    if (rooms[roomId].private) return null; // refuse public-flow on private room
     if (rooms[roomId]._cleanupTimer) {
       clearTimeout(rooms[roomId]._cleanupTimer);
       rooms[roomId]._cleanupTimer = null;
@@ -265,22 +369,51 @@ function getOrCreateRoom(roomId) {
     queue: [],
     playbackState: emptyPlaybackState(),
     _cleanupTimer: null,
+    private: false,
+    authHash: null,
   };
   return rooms[roomId];
+}
+
+function createPrivateRoom(roomId, authHash) {
+  if (rooms[roomId]) return null;
+  if (Object.keys(rooms).length >= MAX_ROOMS) return null;
+  rooms[roomId] = {
+    id: roomId,
+    members: [],
+    queue: [],
+    playbackState: emptyPlaybackState(),
+    _cleanupTimer: null,
+    private: true,
+    authHash,
+  };
+  return rooms[roomId];
+}
+
+function cancelCleanupTimer(room) {
+  if (room?._cleanupTimer) {
+    clearTimeout(room._cleanupTimer);
+    room._cleanupTimer = null;
+  }
 }
 
 function scheduleRoomCleanup(roomId) {
   const room = rooms[roomId];
   if (!room || room.members.length > 0) return;
   if (room._cleanupTimer) clearTimeout(room._cleanupTimer);
+  const ttl = room.private ? PRIVATE_ROOM_BLIP_MS : EMPTY_ROOM_TTL_MS;
+  const wasPrivate = room.private;
   room._cleanupTimer = setTimeout(() => {
-    // Re-check at fire time — someone may have rejoined.
     const r = rooms[roomId];
     if (r && r.members.length === 0) {
       delete rooms[roomId];
-      console.log(`[room] cleaned up empty room: ${roomId}`);
+      if (wasPrivate) {
+        logPrivate("room cleanup fired");
+      } else {
+        console.log(`[room] cleaned up empty room: ${roomId}`);
+      }
     }
-  }, EMPTY_ROOM_TTL_MS);
+  }, ttl);
 }
 
 function getMember(room, userId) {
@@ -331,6 +464,124 @@ function advanceToNextTrack(room, roomId) {
   broadcastPlaybackState(roomId);
 }
 
+async function joinPrivateRoom(
+  socket,
+  { roomId, usernameCipher, authProofB64, create, userId },
+) {
+  if (!PRIVATE_ROOM_ID_REGEX.test(roomId)) {
+    socket.emit("room:join_failed", { reason: "auth_failed" });
+    return;
+  }
+
+  const lockedFor = checkLockout(roomId);
+  if (lockedFor !== null) {
+    socket.emit("room:join_failed", {
+      reason: "locked",
+      retryAfterMs: lockedFor,
+    });
+    return;
+  }
+
+  const authProof = decodeAuthProof(authProofB64);
+  if (!authProof) {
+    socket.emit("room:join_failed", { reason: "auth_failed" });
+    return;
+  }
+
+  let room = getRoom(roomId);
+
+  if (!room) {
+    if (!create) {
+      // Don't confirm whether the room exists. Wrong-password and not-found
+      // collapse into the same response.
+      recordFailedAttempt(roomId);
+      logPrivate("join attempt: room not found");
+      socket.emit("room:join_failed", { reason: "auth_failed" });
+      return;
+    }
+    if (Object.keys(rooms).length >= MAX_ROOMS) {
+      socket.emit("room:join_failed", { reason: "capacity" });
+      return;
+    }
+    let authHash;
+    try {
+      authHash = await argon2.hash(authProof, { type: argon2.argon2id });
+    } catch (err) {
+      logPrivate("argon2 hash error");
+      socket.emit("room:join_failed", { reason: "auth_failed" });
+      return;
+    }
+    room = createPrivateRoom(roomId, authHash);
+    if (!room) {
+      socket.emit("room:join_failed", { reason: "capacity" });
+      return;
+    }
+    logPrivate("room created");
+  } else {
+    if (!room.private) {
+      // A public room exists at this roomId — refuse to expose it via the
+      // private flow. Generic failure.
+      socket.emit("room:join_failed", { reason: "auth_failed" });
+      return;
+    }
+    let ok = false;
+    try {
+      ok = await argon2.verify(room.authHash, authProof);
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      const entry = recordFailedAttempt(roomId);
+      logPrivate(
+        `auth failed (count=${entry.failedAttempts}, locked=${entry.lockedUntil > Date.now()})`,
+      );
+      socket.emit("room:join_failed", { reason: "auth_failed" });
+      return;
+    }
+    cancelCleanupTimer(room);
+    logPrivate("auth ok");
+  }
+
+  clearLockout(roomId);
+
+  if (
+    !getMember(room, userId) &&
+    room.members.length >= MAX_MEMBERS_PER_ROOM
+  ) {
+    socket.emit("room:join_failed", { reason: "room full" });
+    return;
+  }
+
+  socket.join(roomId);
+  socket.data.roomId = roomId;
+  // Server has no plaintext username for private members. Use the userId
+  // as the chat-send identity gate — non-empty means "joined a room".
+  socket.data.username = userId;
+  socket.data.usernameCipher = usernameCipher;
+  socket.data.private = true;
+
+  if (!getMember(room, userId)) {
+    room.members.push({
+      userId,
+      usernameCipher,
+      role: room.members.length === 0 ? "host" : "listener",
+    });
+    socket.to(roomId).emit("room:member_joined", { userId, usernameCipher });
+  }
+
+  const member = getMember(room, userId);
+
+  socket.emit("room:joined", {
+    room: { id: roomId, private: true },
+    userId,
+    members: room.members,
+    queue: room.queue,
+    playbackState: room.playbackState,
+    role: member?.role ?? "listener",
+    private: true,
+  });
+}
+
 // ─────────────────────────────
 // SOCKET RATE LIMITING
 // ─────────────────────────────
@@ -364,29 +615,62 @@ io.on("connection", (socket) => {
   console.log(`[socket] connected: ${socket.id} (${socket.data.userId})`);
 
   // ── JOIN ROOM ──
-  socket.on("room:join", ({ roomId, username }) => {
+  // Public flow: { roomId, username }
+  // Private flow: { roomId, username, authProof, create? }
+  // The presence of `authProof` switches the handler into the private path.
+  //
+  // Protocol assumption (private flow): `authProof` MUST be subkey 2 of the
+  // client's crypto.ts/crypto.py KDF derivation (32 bytes, base64). On
+  // create, the server stores its argon2id hash as the room secret — if the
+  // client sends a weak value here, the room is only as strong as that
+  // value. The server cannot enforce derivation; this is a client-side
+  // contract. See PRIVATE_ROOMS_SPEC.md.
+  socket.on("room:join", async ({ roomId, username, authProof, create }) => {
     if (!joinLimiter(socket, "join")) return;
     if (typeof roomId !== "string" || !roomId.trim()) return;
 
-    // Username stays user-controlled but is sanitized server-side: trim,
-    // cap length, reject empty/non-string. Display labels can collide; the
-    // userId underneath is always unique.
+    const userId = socket.data.userId;
+    const wantsPrivate = authProof !== undefined;
+
+    if (wantsPrivate) {
+      // Private rooms ship username as { ct, nonce } (encrypted with chatKey).
+      // Server treats it as an opaque relay payload — see PRIVATE_ROOMS_SPEC.md.
+      const cipher = validateUsernameCipher(username);
+      if (!cipher) {
+        socket.emit("room:join_failed", { reason: "auth_failed" });
+        return;
+      }
+      await joinPrivateRoom(socket, {
+        roomId,
+        usernameCipher: cipher,
+        authProofB64: authProof,
+        create: Boolean(create),
+        userId,
+      });
+      return;
+    }
+
     const cleanName =
       typeof username === "string" ? username.trim().slice(0, 32) : "";
     if (!cleanName) return;
 
-    const userId = socket.data.userId;
+    if (!PUBLIC_ROOM_ID_REGEX.test(roomId)) {
+      // Reject malformed public room ids early so bots can't fill MAX_ROOMS
+      // with unicode/emoji/path-traversal keys.
+      socket.emit("room:join_failed", { reason: "invalid room name" });
+      return;
+    }
+
     const room = getOrCreateRoom(roomId);
     if (!room) {
-      // Server at MAX_ROOMS — refuse to spin up another room. Existing rooms
-      // can still be joined.
+      // Either at MAX_ROOMS or this roomId belongs to a private room and
+      // can't be joined via the public flow. Same generic message either way.
       socket.emit("room:join_failed", {
         reason: "server at capacity, try again later",
       });
       return;
     }
 
-    // Hard cap on members. Once full, only existing members can rejoin.
     if (
       !getMember(room, userId) &&
       room.members.length >= MAX_MEMBERS_PER_ROOM
@@ -423,6 +707,16 @@ io.on("connection", (socket) => {
     });
   });
 
+  socket.on("room:destroy", ({ roomId }) => {
+    const room = getRoom(roomId);
+    if (!room || !room.private) return;
+    if (!isHost(socket, room)) return;
+    cancelCleanupTimer(room);
+    io.in(roomId).disconnectSockets(true);
+    delete rooms[roomId];
+    logPrivate("room destroyed by host");
+  });
+
   // ── HOST TRANSFER ──
   socket.on("host:transfer", ({ roomId, newHostId }) => {
     const room = getRoom(roomId);
@@ -437,9 +731,13 @@ io.on("connection", (socket) => {
     currentHost.role = "listener";
     newHost.role = "host";
 
+    // Private rooms relay the cipher object stored on the member; public
+    // rooms relay the plaintext username field. Each receiver decrypts only
+    // when it knows the chatKey.
     io.to(roomId).emit("host:changed", {
       newHostId: newHost.userId,
-      newHostUsername: newHost.username,
+      newHostUsername: room.private ? undefined : newHost.username,
+      newHostUsernameCipher: room.private ? newHost.usernameCipher : undefined,
     });
   });
 
@@ -478,7 +776,10 @@ io.on("connection", (socket) => {
         thumbnail: thumbnailFor(videoId),
         duration: sanitizeDuration(duration),
         votes: 0,
-        addedBy: socket.data.username,
+        // Private rooms have no plaintext username server-side
+        // (socket.data.username is the userId UUID). Receiving clients
+        // resolve addedById against their decrypted member map.
+        addedBy: socket.data.private ? undefined : socket.data.username,
         addedById: socket.data.userId,
       };
 
@@ -516,27 +817,36 @@ io.on("connection", (socket) => {
   });
 
   // ── CHAT ──
-  socket.on("chat:send", ({ roomId, text }) => {
-    // Identity is stamped from socket.data, never from the client payload.
-    // Without this, anyone could forge messages from anyone.
+  // Public rooms: { roomId, text }                — text is plaintext ≤500 chars.
+  // Private rooms: { roomId, ct, nonce }          — both base64. Server relays
+  // opaquely; never inspects content. See PRIVATE_ROOMS_SPEC.md.
+  socket.on("chat:send", ({ roomId, text, ct, nonce }) => {
     if (!socket.data.username) return;
-    if (typeof text !== "string") return;
 
-    const trimmed = text.trim();
-    if (!trimmed || trimmed.length > 500) return;
+    let payload;
+    if (socket.data.private) {
+      if (typeof ct !== "string" || typeof nonce !== "string") return;
+      if (!ct || ct.length > 2000) return;
+      if (!nonce || nonce.length > CIPHER_FIELD_MAX_CHARS) return;
+      payload = { ct, nonce };
+    } else {
+      if (typeof text !== "string") return;
+      const trimmed = text.trim();
+      if (!trimmed || trimmed.length > 500) return;
+      payload = { text: trimmed };
+    }
 
     if (!chatLimiter(socket, "chat")) {
-      // Private feedback to just this socket — never broadcast. Doesn't
-      // shame the user in chat; doesn't help attackers measure the limit
-      // against anyone else's view.
       socket.emit("chat:rate_limited", { retryAfterMs: 5_000 });
       return;
     }
 
+    // Private rooms omit username — receiving clients look it up in their
+    // decrypted member map by userId.
     io.to(roomId).emit("chat:message", {
       userId: socket.data.userId,
-      username: socket.data.username,
-      text: trimmed,
+      username: socket.data.private ? undefined : socket.data.username,
+      ...payload,
       timestamp: Date.now(),
     });
   });
@@ -597,11 +907,15 @@ io.on("connection", (socket) => {
 
   // ── DISCONNECT ──
   socket.on("disconnect", () => {
-    const { roomId, userId } = socket.data || {};
+    const { roomId, userId, private: wasPrivate } = socket.data || {};
     const room = rooms[roomId];
 
     if (!room) {
-      console.log(`[socket] disconnected: ${socket.id}`);
+      if (wasPrivate) {
+        logPrivate("socket disconnect (no room)");
+      } else {
+        console.log(`[socket] disconnected: ${socket.id}`);
+      }
       return;
     }
 
@@ -618,17 +932,24 @@ io.on("connection", (socket) => {
 
       io.to(roomId).emit("host:changed", {
         newHostId: newHost.userId,
-        newHostUsername: newHost.username,
+        newHostUsername: room.private ? undefined : newHost.username,
+        newHostUsernameCipher: room.private
+          ? newHost.usernameCipher
+          : undefined,
       });
     }
 
     // Last member out — schedule TTL cleanup. Cancelled if anyone rejoins
-    // before the timer fires.
+    // before the timer fires (private rooms: only after a successful auth).
     if (room.members.length === 0) {
       scheduleRoomCleanup(roomId);
     }
 
-    console.log(`[socket] disconnected: ${socket.id}`);
+    if (room.private) {
+      logPrivate("socket disconnect");
+    } else {
+      console.log(`[socket] disconnected: ${socket.id}`);
+    }
   });
 });
 
@@ -733,7 +1054,22 @@ async function initializeServer() {
   });
 }
 
-initializeServer().catch((err) => {
-  console.error("[setup] fatal:", err.message || err);
-  process.exit(1);
-});
+if (require.main === module) {
+  initializeServer().catch((err) => {
+    console.error("[setup] fatal:", err.message || err);
+    process.exit(1);
+  });
+}
+
+// Tests import this module to spin up the server on an ephemeral port and
+// inspect/reset in-memory state. Never exposed over the network.
+module.exports = {
+  app,
+  server,
+  io,
+  rooms,
+  privateRoomLockouts,
+  PRIVATE_ROOM_BLIP_MS,
+  PRIVATE_LOCKOUT_AFTER,
+  PRIVATE_LOCKOUT_DURATION_MS,
+};

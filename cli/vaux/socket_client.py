@@ -10,6 +10,75 @@ from typing import Callable
 import socketio
 
 
+async def probe_join(
+    server_url: str,
+    room_id: str,
+    username,  # str for public, {"ct", "nonce"} dict for private
+    *,
+    is_private: bool = False,
+    auth_proof_b64: str | None = None,
+    create: bool = False,
+    timeout: float = 6.0,
+) -> str | None:
+    """Run a join handshake on a throwaway socket. Returns None on success,
+    a human-friendly error message on failure. Used to validate credentials
+    BEFORE launching VauxApp so a rejected join never flashes the room UI.
+
+    The server sees two joins (probe + real) and a leave in between, which
+    starts the 5 s blip timer for private rooms. VauxApp's real join cancels
+    that timer well before it fires.
+    """
+    sio = socketio.AsyncClient(reconnection=False)
+    result: dict = {}
+    done = asyncio.Event()
+
+    @sio.on("room:joined")
+    async def _ok(_):
+        result["ok"] = True
+        done.set()
+
+    @sio.on("room:join_failed")
+    async def _fail(data):
+        result["reason"] = (data or {}).get("reason", "join refused")
+        result["retryAfterMs"] = (data or {}).get("retryAfterMs")
+        done.set()
+
+    try:
+        await sio.connect(server_url, transports=["websocket", "polling"])
+        payload: dict = {"roomId": room_id, "username": username}
+        if auth_proof_b64:
+            payload["authProof"] = auth_proof_b64
+            if create:
+                payload["create"] = True
+        await sio.emit("room:join", payload)
+        await asyncio.wait_for(done.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        return "connection timed out — check the server"
+    except Exception as exc:
+        return str(exc) or "could not connect to server"
+    finally:
+        try:
+            await sio.disconnect()
+        except Exception:
+            pass
+
+    if result.get("ok"):
+        return None
+
+    reason = result.get("reason", "join refused")
+    if is_private:
+        # Collapse "wrong code" and "room not found" so the server isn't a
+        # probe oracle for room existence. Matches VauxApp's wording.
+        if reason == "auth_failed":
+            return "wrong password, or this room no longer exists"
+        if reason == "locked":
+            ms = result.get("retryAfterMs") or 60_000
+            return f"too many attempts — try again in {max(1, ms // 1000)}s"
+        if reason in ("room full", "capacity"):
+            return "private room is full"
+    return reason
+
+
 class VauxSocket:
     def __init__(self, server_url: str):
         self.server_url = server_url
@@ -41,21 +110,48 @@ class VauxSocket:
         await self.sio.disconnect()
 
     # ── emit helpers — mirrors web client emit calls ───────────────────────
-    async def join_room(self, room_id: str, username: str):
-        # Server assigns userId on connection; client only supplies its display
-        # name. Anything client-side sending userId would be ignored anyway.
-        await self.sio.emit("room:join", {
-            "roomId": room_id,
-            "username": username,
-        })
+    async def join_room(
+        self,
+        room_id: str,
+        username,
+        *,
+        auth_proof_b64: str | None = None,
+        create: bool = False,
+    ):
+        """Public join: pass `username` as a plain string.
+        Private join: pass `username` as `{"ct": <b64>, "nonce": <b64>}`
+        (encrypted with chatKey) AND `auth_proof_b64`. The server branches on
+        the presence of `authProof` — see PRIVATE_ROOMS_SPEC.md."""
+        payload: dict = {"roomId": room_id, "username": username}
+        if auth_proof_b64 is not None:
+            payload["authProof"] = auth_proof_b64
+            if create:
+                payload["create"] = True
+        await self.sio.emit("room:join", payload)
 
-    async def send_chat(self, room_id: str, text: str):
-        # Server stamps userId/username from the socket session; client cannot
-        # forge sender identity on chat messages.
-        await self.sio.emit("chat:send", {
-            "roomId": room_id,
-            "text": text,
-        })
+    async def send_chat(
+        self,
+        room_id: str,
+        text: str | None = None,
+        *,
+        ct: str | None = None,
+        nonce: str | None = None,
+    ):
+        """Public room: pass `text` (plaintext).
+        Private room: pass `ct`/`nonce` (base64 ciphertext from encrypt_chat).
+        Server relays opaquely — never inspects either form."""
+        payload: dict = {"roomId": room_id}
+        if ct is not None and nonce is not None:
+            payload["ct"] = ct
+            payload["nonce"] = nonce
+        else:
+            payload["text"] = text or ""
+        await self.sio.emit("chat:send", payload)
+
+    async def destroy_room(self, room_id: str):
+        """Host-only burn for private rooms — server immediately deletes
+        the room and force-disconnects all sockets. No-op on public rooms."""
+        await self.sio.emit("room:destroy", {"roomId": room_id})
 
     async def add_to_queue(self, room_id: str, video_id: str, title: str,
                            channel: str, thumbnail: str, duration: float = 0.0):

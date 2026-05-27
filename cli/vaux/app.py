@@ -66,11 +66,36 @@ def _truncate_cells(text: str, max_cells: int) -> str:
         width += w
     return "".join(out)
 
-from vaux.socket_client import VauxSocket
+from vaux.socket_client import VauxSocket, probe_join
 from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url, ping_server
 from vaux.mpv import find_mpv
 from vaux.room_slug import generate_room_slug
+from vaux.crypto import (
+    RoomMaterial,
+    auth_proof_to_b64,
+    decrypt_chat,
+    derive_room_material,
+    encrypt_chat,
+    generate_password,
+    is_well_formed_password,
+    parse_invite,
+)
+from dataclasses import dataclass
+
+@dataclass
+class LobbySelection:
+    """What LobbyApp returns to main.py. `private` material is None for
+    public rooms; populated for private rooms so VauxApp can encrypt/decrypt
+    without re-deriving (Argon2id is ~250 ms — only do it once per session)."""
+
+    room_id: str
+    username: str
+    is_private: bool = False
+    auth_proof_b64: str = ""
+    chat_key: bytes = b""
+    password: str = ""  # kept in-memory for in-room "copy invite link"
+    create: bool = False  # True only for private-create flow
 
 import subprocess
 
@@ -580,7 +605,17 @@ class LobbyApp(App):
         margin-bottom: 1;
     }
 
-    #create-btn, #join-btn {
+    #create-btn, #join-btn, #private-btn {
+        width: 1fr;
+    }
+
+    #priv-row {
+        layout: horizontal;
+        height: 3;
+        margin-bottom: 1;
+    }
+
+    #priv-new-btn, #priv-paste-btn {
         width: 1fr;
     }
 
@@ -632,13 +667,28 @@ class LobbyApp(App):
         Binding("tab", "focus_next", "Next field", show=False),
     ]
 
-    def __init__(self, server_url: str):
+    def __init__(
+        self,
+        server_url: str,
+        *,
+        initial_invite: str | None = None,
+        initial_error: str | None = None,
+    ):
         super().__init__()
         self.server_url = server_url
-        self._mode = "create"
+        self._initial_error = initial_error
+        # _mode ∈ {"create", "join", "private_create", "private_paste"}.
+        # Sole entry from main.py for invite URLs lands us in "private_paste"
+        # with the password pre-filled — same UX as the web client.
+        if initial_invite and is_well_formed_password(initial_invite):
+            self._mode = "private_paste"
+            self._initial_invite = initial_invite
+        else:
+            self._mode = "create"
+            self._initial_invite = None
         self._slug = generate_room_slug()
-        # result is set before exit so the caller can read it
-        self.result: tuple[str, str] | None = None
+        self._private_password = generate_password()
+        self.result: LobbySelection | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="card"):
@@ -647,6 +697,11 @@ class LobbyApp(App):
             with Horizontal(id="mode-row"):
                 yield Button("create room", id="create-btn", variant="success")
                 yield Button("join room",   id="join-btn",   variant="default")
+                yield Button("🔒 private",  id="private-btn", variant="default")
+
+            with Horizontal(id="priv-row"):
+                yield Button("new room",     id="priv-new-btn",   variant="success")
+                yield Button("paste invite", id="priv-paste-btn", variant="default")
 
             with Horizontal(id="slug-row"):
                 yield Label(self._slug, id="slug-display")
@@ -671,6 +726,14 @@ class LobbyApp(App):
         self._apply_mode()
         self._apply_title()
         asyncio.create_task(ping_server(self.server_url))
+        if self._initial_error:
+            # Surfaced from a failed VauxApp join — replaces whatever default
+            # hint _apply_mode set so the user sees why they bounced back.
+            self.query_one("#hint", Label).update(
+                f"[red]{self._initial_error}[/red]"
+            )
+            self.notify(self._initial_error, severity="error", timeout=8)
+            self._initial_error = None
 
     def on_resize(self, event) -> None:
         self._apply_title()
@@ -687,33 +750,75 @@ class LobbyApp(App):
 
     def _apply_mode(self):
         slug_row   = self.query_one("#slug-row")
+        slug_display = self.query_one("#slug-display", Label)
+        priv_row   = self.query_one("#priv-row")
         room_input_row = self.query_one("#room-input-row")
         room_input = self.query_one("#room-input", Input)
         go_btn     = self.query_one("#go-btn", Button)
         hint       = self.query_one("#hint", Label)
         create_btn = self.query_one("#create-btn", Button)
         join_btn   = self.query_one("#join-btn", Button)
+        private_btn = self.query_one("#private-btn", Button)
         copy_btn   = self.query_one("#copy-btn", Button)
+        reroll_btn = self.query_one("#reroll-btn", Button)
         paste_btn  = self.query_one("#paste-btn", Button)
+        priv_new_btn = self.query_one("#priv-new-btn", Button)
+        priv_paste_btn = self.query_one("#priv-paste-btn", Button)
+
+        is_private = self._mode.startswith("private")
+        create_btn.variant = "success" if self._mode == "create" else "default"
+        join_btn.variant   = "success" if self._mode == "join" else "default"
+        private_btn.variant = "success" if is_private else "default"
+
+        priv_row.display = is_private
+        priv_new_btn.variant = (
+            "success" if self._mode == "private_create" else "default"
+        )
+        priv_paste_btn.variant = (
+            "success" if self._mode == "private_paste" else "default"
+        )
 
         if self._mode == "create":
             slug_row.display   = True
-            room_input_row.display = False
+            slug_display.update(self._slug)
+            reroll_btn.display = True
             copy_btn.display   = True
+            room_input_row.display = False
             paste_btn.display  = False
             go_btn.label       = "create & join →"
             hint.update("Copy the room name to share with others 📋")
-            create_btn.variant = "success"
-            join_btn.variant   = "default"
-        else:
+
+        elif self._mode == "join":
             slug_row.display   = False
             room_input_row.display = True
             copy_btn.display   = False
             paste_btn.display  = True
+            room_input.placeholder = "room name (e.g. velvet-orbit-42)"
             go_btn.label       = "join room →"
             hint.update("Ask the host for their room name")
-            create_btn.variant = "default"
-            join_btn.variant   = "success"
+            room_input.focus()
+
+        elif self._mode == "private_create":
+            slug_row.display   = True
+            slug_display.update(self._private_password)
+            reroll_btn.display = True
+            copy_btn.display   = True
+            room_input_row.display = False
+            paste_btn.display  = False
+            go_btn.label       = "create private room →"
+            hint.update("Share the code 📋 — chat is end-to-end encrypted")
+
+        elif self._mode == "private_paste":
+            slug_row.display   = False
+            room_input_row.display = True
+            copy_btn.display   = False
+            paste_btn.display  = True
+            room_input.placeholder = "paste invite link or password"
+            go_btn.label       = "join private room →"
+            hint.update("Paste the invite URL or 22-char code")
+            if self._initial_invite:
+                room_input.value = self._initial_invite
+                self._initial_invite = None
             room_input.focus()
 
     def on_button_pressed(self, event: Button.Pressed):
@@ -727,9 +832,29 @@ class LobbyApp(App):
             self._mode = "join"
             self._apply_mode()
 
+        elif btn_id == "private-btn":
+            # First click defaults to "new private". Subsequent clicks while
+            # already in private leave the sub-mode alone (user picks via
+            # priv-row buttons).
+            if not self._mode.startswith("private"):
+                self._mode = "private_create"
+                self._apply_mode()
+
+        elif btn_id == "priv-new-btn":
+            self._mode = "private_create"
+            self._apply_mode()
+
+        elif btn_id == "priv-paste-btn":
+            self._mode = "private_paste"
+            self._apply_mode()
+
         elif btn_id == "reroll-btn":
-            self._slug = generate_room_slug()
-            self.query_one("#slug-display", Label).update(self._slug)
+            if self._mode == "private_create":
+                self._private_password = generate_password()
+                self.query_one("#slug-display", Label).update(self._private_password)
+            else:
+                self._slug = generate_room_slug()
+                self.query_one("#slug-display", Label).update(self._slug)
 
         elif btn_id == "go-btn":
             self._submit()
@@ -741,39 +866,124 @@ class LobbyApp(App):
             self._paste_slug()
 
     def _copy_slug(self):
-        pyperclip.copy(self._slug)
-        self.query_one("#hint", Label).update("Copied to clipboard!")
+        if self._mode == "private_create":
+            pyperclip.copy(self._private_password)
+            self.query_one("#hint", Label).update("Code copied — share it privately")
+        else:
+            pyperclip.copy(self._slug)
+            self.query_one("#hint", Label).update("Copied to clipboard!")
 
     def _paste_slug(self):
         try:
             text = pyperclip.paste().strip()
         except pyperclip.PyperclipException:
             return
-        if text:
-            self.query_one("#room-input", Input).value = text
+        if not text:
+            return
+        self.query_one("#room-input", Input).value = text
 
     def on_input_submitted(self, event: Input.Submitted):
-        self._submit()
+        asyncio.create_task(self._submit_async())
 
     def _submit(self):
+        # Sync wrapper kept so button handlers don't have to be async. The
+        # probe must run on the event loop, so we tail-call the async path.
+        asyncio.create_task(self._submit_async())
+
+    async def _submit_async(self):
         username = self.query_one("#username-input", Input).value.strip()
-
-        if self._mode == "create":
-            room_id = self._slug
-        else:
-            room_id = self.query_one("#room-input", Input).value.strip()
-
         hint = self.query_one("#hint", Label)
 
-        if not room_id:
-            hint.update("[red]enter a room name[/red]")
-            return
+        if self._mode == "private_create":
+            password = self._private_password
+        elif self._mode == "private_paste":
+            raw = self.query_one("#room-input", Input).value.strip()
+            password = parse_invite(raw) or ""
+            if not password:
+                hint.update("[red]invalid invite — paste the URL or 22-char code[/red]")
+                return
+        elif self._mode == "create":
+            room_id = self._slug
+            password = ""
+        else:
+            room_id = self.query_one("#room-input", Input).value.strip()
+            password = ""
+            # Friendly nudge if the user pasted a private invite into the
+            # public-join field — same UX as the web client.
+            if not room_id:
+                hint.update("[red]enter a room name[/red]")
+                return
+            if parse_invite(room_id):
+                self._mode = "private_paste"
+                self._initial_invite = parse_invite(room_id)
+                self._apply_mode()
+                hint.update("[yellow]that looks like a private invite — switched tabs[/yellow]")
+                return
+
         if not username:
             hint.update("[red]enter your name[/red]")
             return
 
-        self.result = (room_id, username)
-        self.exit()
+        # Disable the go button while we probe so impatient double-clicks
+        # don't spawn parallel probe tasks (they'd race the disconnect).
+        go_btn = self.query_one("#go-btn", Button)
+        go_btn.disabled = True
+        try:
+            if password:
+                # Argon2id is ~250 ms — derive once before probing so VauxApp
+                # doesn't pay the cost again on its real join.
+                try:
+                    hint.update("deriving keys…")
+                    self.refresh()
+                    material = derive_room_material(password)
+                except Exception as exc:
+                    hint.update(f"[red]derivation failed: {exc}[/red]")
+                    return
+
+                hint.update("connecting…")
+                self.refresh()
+                from vaux.crypto import encrypt_chat
+                cipher = encrypt_chat(material.chat_key, username)
+                err = await probe_join(
+                    self.server_url,
+                    material.room_id,
+                    cipher,
+                    is_private=True,
+                    auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                    create=(self._mode == "private_create"),
+                )
+                if err:
+                    hint.update(f"[red]{err}[/red]")
+                    return
+                self.result = LobbySelection(
+                    room_id=material.room_id,
+                    username=username,
+                    is_private=True,
+                    auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                    chat_key=material.chat_key,
+                    password=password,
+                    create=(self._mode == "private_create"),
+                )
+            else:
+                if not room_id:
+                    hint.update("[red]enter a room name[/red]")
+                    return
+                hint.update("connecting…")
+                self.refresh()
+                err = await probe_join(
+                    self.server_url, room_id, username, is_private=False,
+                )
+                if err:
+                    hint.update(f"[red]{err}[/red]")
+                    return
+                self.result = LobbySelection(
+                    room_id=room_id, username=username, is_private=False,
+                )
+
+            self.exit()
+        finally:
+            if self.result is None:
+                go_btn.disabled = False
 
     def action_info(self) -> None:
         self.push_screen(InfoModal(in_room=False))
@@ -875,7 +1085,8 @@ class NowPlaying(Static):
 
 # ── QueueItem widget ───────────────────────────────────────────────────────
 class QueueItem(ListItem):
-    """Single queue row; host rows show a red x hint separated from the edge."""
+    """Single queue row. Host removes via the `x` / `delete` keybindings —
+    no visual delete affordance, the column is too narrow to spare cells."""
 
     DEFAULT_CSS = """
     QueueItem {
@@ -888,16 +1099,6 @@ class QueueItem(ListItem):
     QueueItem > .queue-item-label {
         width: 1fr;
         content-align: left middle;
-    }
-
-    QueueItem > .queue-remove-hint {
-        width: 3;
-        min-width: 3;
-        margin-left: 1;
-        margin-right: 2;
-        content-align: center middle;
-        color: #C44545;
-        text-style: bold;
     }
     """
 
@@ -912,8 +1113,6 @@ class QueueItem(ListItem):
         added_by = self._item.get("addedBy", "")
         vote_str = f"+{votes}" if votes >= 0 else str(votes)
         yield Label(f"{vote_str}  {title}  — {added_by}", classes="queue-item-label")
-        if self._is_host:
-            yield Static("x", classes="queue-remove-hint")
 
 
 # ── SearchResultItem widget ────────────────────────────────────────────────
@@ -1076,11 +1275,34 @@ class VauxApp(App):
             out = cls._NOISE_SUFFIX_RE.sub("", out).rstrip()
         return out or "track"
 
-    def __init__(self, room_id: str, username: str, server_url: str):
+    def __init__(
+        self,
+        room_id: str,
+        username: str,
+        server_url: str,
+        *,
+        is_private: bool = False,
+        auth_proof_b64: str = "",
+        chat_key: bytes = b"",
+        password: str = "",
+        create_private: bool = False,
+    ):
         super().__init__()
         self.room_id = room_id
         self.username = username
         self.server_url = server_url
+
+        # Private-room state. chat_key + auth_proof are derived once in the
+        # lobby (Argon2id is ~250 ms — never re-derive at runtime). password
+        # is kept ONLY so users can copy the invite URL from in-room.
+        self.is_private = bool(is_private)
+        self._auth_proof_b64 = auth_proof_b64
+        self._chat_key = chat_key
+        self._password = password
+        self._create_private = create_private and is_private
+        # userId → decrypted display name. Server never sees these for private
+        # rooms; we maintain the mapping locally per session.
+        self._name_cache: dict[str, str] = {}
 
         self.socket = VauxSocket(server_url)
         # Real identity is the server-assigned UUID we get back in room:joined.
@@ -1090,6 +1312,10 @@ class VauxApp(App):
         self.role = "listener"
         self.members: list[dict] = []
         self.queue: list[dict] = []
+        # Set by _on_room_join_failed before we exit() so main.py can decide
+        # whether to re-open the lobby with the error displayed.
+        self.join_error: str | None = None
+        self._joined = False
         self.playback = PlaybackState()
         self.search_results: list[SearchResult] = []
         self.last_video_id = None
@@ -1165,17 +1391,42 @@ class VauxApp(App):
 
     # ── lifecycle ──────────────────────────────────────────────────────────
     async def on_mount(self):
-        self.title = f"vaux / {self.room_id}"
+        # Private rooms hide the random roomId from the header — it's an
+        # opaque base64url string with no value to the user, and showing it
+        # could leak shoulder-surfing bits. The 🔒 makes the mode obvious.
+        self.title = "vaux / 🔒 private" if self.is_private else f"vaux / {self.room_id}"
         self.sub_title = "connecting…"
         self.screen.loading = True
         self._register_socket_events()
         await self.socket.connect()
-        await self.socket.join_room(self.room_id, self.username)
+
+        if self.is_private:
+            # Encrypt the username with chatKey before sending — the server
+            # never sees plaintext names for private rooms. Cipher object
+            # `{ct, nonce}` is opaquely relayed by the server.
+            cipher = encrypt_chat(self._chat_key, self.username)
+            await self.socket.join_room(
+                self.room_id,
+                cipher,
+                auth_proof_b64=self._auth_proof_b64,
+                create=self._create_private,
+            )
+        else:
+            await self.socket.join_room(self.room_id, self.username)
+
         self.set_interval(1.0, self._check_player_status)
 
     async def on_unmount(self):
         if getattr(self, "player", None):
             self.player.stop()
+        # Host leaving a private room burns it — server immediately deletes
+        # state and force-disconnects remaining sockets. Listeners see
+        # "could not join — room no longer exists" if they try to rejoin.
+        if self.is_private and self.is_host:
+            try:
+                await self.socket.destroy_room(self.room_id)
+            except Exception:
+                pass
         await self.socket.disconnect()
 
     # ── socket event wiring ────────────────────────────────────────────────
@@ -1192,13 +1443,51 @@ class VauxApp(App):
         self.socket.on("room:join_failed", self._on_room_join_failed)
         self.socket.on("reaction:broadcast", self._on_reaction)
 
+    def _decrypt_name(self, cipher: dict | None) -> str | None:
+        """Decrypt a usernameCipher object. Returns None if absent or
+        tampered — caller falls back to a generic placeholder."""
+        if not isinstance(cipher, dict) or not self._chat_key:
+            return None
+        ct = cipher.get("ct")
+        nonce = cipher.get("nonce")
+        if not isinstance(ct, str) or not isinstance(nonce, str):
+            return None
+        return decrypt_chat(self._chat_key, ct, nonce)
+
+    def _resolve_member_name(self, member: dict) -> str:
+        """Pick a display name for a member. Public rooms ship plaintext
+        usernames; private rooms ship usernameCipher and we decrypt locally
+        with chatKey, caching by userId so we don't re-decrypt per chat msg."""
+        uid = member.get("userId", "")
+        if not self.is_private:
+            return member.get("username") or uid or "?"
+        if uid and uid in self._name_cache:
+            return self._name_cache[uid]
+        decrypted = self._decrypt_name(member.get("usernameCipher"))
+        name = decrypted or "anon"
+        if uid:
+            self._name_cache[uid] = name
+        return name
+
     async def _on_room_joined(self, data: dict):
         try:
+            self._joined = True
             self.user_id = data.get("userId", "")
             self.role = data.get("role", "listener")
             self.is_host = self.role == "host"
-            self.members = data.get("members", [])
-            self.queue = data.get("queue", [])
+            members = data.get("members", []) or []
+            # Normalize private members so the rest of the app can read
+            # `member["username"]` regardless of room type. Skip the cipher
+            # field afterward — it never leaves this method.
+            for m in members:
+                if self.is_private:
+                    m["username"] = self._resolve_member_name(m)
+                    m.pop("usernameCipher", None)
+            self.members = members
+            initial_queue = data.get("queue", []) or []
+            for track in initial_queue:
+                track["addedBy"] = self._resolve_added_by(track)
+            self.queue = initial_queue
             pb = data.get("playbackState") or {}
             self.playback = PlaybackState.from_dict(pb)
             await self._refresh_queue()
@@ -1207,7 +1496,16 @@ class VauxApp(App):
             self._update_header_subtitle()
             # `joined` first so the user sees their join confirmation before
             # the syncing notice that _apply_playback may emit.
-            self._post_system(f"joined [{self.role}]")
+            suffix = " · 🔒 chat E2E" if self.is_private else ""
+            self._post_system(f"joined [{self.role}]{suffix}")
+            if self.is_private:
+                # System log is ~18 cells wide and RichLog auto-wraps a long
+                # disclaimer into 3-4 ragged lines. Use a transient toast so
+                # the warning is seen once without eating permanent space.
+                self.notify(
+                    "chat is end-to-end encrypted — queue & playback are not",
+                    timeout=8,
+                )
             await self._apply_playback(announce=False)
             if not getattr(self, "player", None):
                 self._post_system("mpv not found on system. Please install mpv to hear audio.")
@@ -1216,18 +1514,24 @@ class VauxApp(App):
 
     async def _on_member_joined(self, data: dict):
         user_id = data.get("userId")
-        uname = data.get("username", "?")
-        if user_id and not any(m.get("userId") == user_id for m in self.members):
-            self.members.append(
-                {"userId": user_id, "username": uname, "role": "listener"},
-            )
-            self._post_system(f"{uname} joined")
+        if not user_id or any(m.get("userId") == user_id for m in self.members):
+            return
+        if self.is_private:
+            uname = self._decrypt_name(data.get("usernameCipher")) or "anon"
+            self._name_cache[user_id] = uname
+        else:
+            uname = data.get("username", "?")
+        self.members.append(
+            {"userId": user_id, "username": uname, "role": "listener"},
+        )
+        self._post_system(f"{uname} joined")
 
     async def _on_member_left(self, data: dict):
         uid = data.get("userId", "?")
         left = next((m for m in self.members if m.get("userId") == uid), None)
         self.members = [m for m in self.members if m.get("userId") != uid]
         name = left.get("username", uid) if left else uid
+        self._name_cache.pop(uid, None)
         self._post_system(f"{name} left")
         self._update_header_subtitle()
 
@@ -1237,14 +1541,47 @@ class VauxApp(App):
         self.role = "host" if self.is_host else "listener"
         for member in self.members:
             member["role"] = "host" if member.get("userId") == new_host_id else "listener"
-        new_name = data.get("newHostUsername", new_host_id)
+
+        if self.is_private:
+            # Server omits plaintext newHostUsername for private rooms.
+            decrypted = self._decrypt_name(data.get("newHostUsernameCipher"))
+            if decrypted and new_host_id:
+                self._name_cache[new_host_id] = decrypted
+            new_name = (
+                decrypted
+                or self._name_cache.get(new_host_id or "")
+                or "anon"
+            )
+        else:
+            new_name = data.get("newHostUsername", new_host_id)
         self.notify(f"⭐ {new_name} is now host", timeout=3)
         self._update_header_subtitle()
         await self._refresh_queue()
 
+    def _resolve_added_by(self, track: dict) -> str:
+        """Display name for a queue item's adder. Public rooms get the
+        plaintext `addedBy` server-side; private rooms get only `addedById`
+        and we look up the locally-decrypted name."""
+        if track.get("addedBy"):
+            return track["addedBy"]
+        uid = track.get("addedById")
+        if uid:
+            cached = self._name_cache.get(uid)
+            if cached:
+                return cached
+            member = next((m for m in self.members if m.get("userId") == uid), None)
+            if member and member.get("username"):
+                return member["username"]
+        return "anon"
+
     async def _on_queue_updated(self, data: dict):
         old_ids = {t["id"] for t in self.queue}
-        self.queue = data.get("queue", [])
+        incoming = data.get("queue", []) or []
+        # Normalize addedBy in-place so QueueItem rendering and toast text
+        # don't both need to re-resolve. Private rooms ship addedBy=undefined.
+        for track in incoming:
+            track["addedBy"] = self._resolve_added_by(track)
+        self.queue = incoming
         for track in self.queue:
             if track["id"] in old_ids:
                 continue
@@ -1256,7 +1593,7 @@ class VauxApp(App):
             if not added_by_id and track.get("addedBy") == self.username:
                 continue
             title = (track.get("title") or "")[:40]
-            added_by = track.get("addedBy", "?")
+            added_by = track.get("addedBy") or "?"
             self.notify(f"♪ {title} added by {added_by}", timeout=3)
         await self._refresh_queue()
 
@@ -1277,9 +1614,23 @@ class VauxApp(App):
         await self._apply_playback()
 
     async def _on_chat_message(self, data: dict):
-        uname = data.get("username", "?")
         uid = data.get("userId", "")
-        text = data.get("text", "")
+        if self.is_private:
+            ct = data.get("ct")
+            nonce = data.get("nonce")
+            if not isinstance(ct, str) or not isinstance(nonce, str):
+                return
+            text = decrypt_chat(self._chat_key, ct, nonce)
+            if text is None:
+                # Tampered or wrong-key message — drop silently. Never bubble
+                # the failure to the user (could leak adversarial probing).
+                return
+            uname = self._name_cache.get(uid) or self._resolve_member_name(
+                next((m for m in self.members if m.get("userId") == uid), {"userId": uid}),
+            )
+        else:
+            uname = data.get("username", "?")
+            text = data.get("text", "")
         self._post_chat(uname, text, uid)
 
     async def _on_chat_rate_limited(self, data: dict):
@@ -1291,11 +1642,33 @@ class VauxApp(App):
 
     async def _on_room_join_failed(self, data: dict):
         reason = data.get("reason", "join refused")
-        try:
-            self.screen.loading = False
-        except Exception:
-            pass
-        self.notify(f"could not join: {reason}", severity="error", timeout=6)
+
+        if self.is_private:
+            # Private rooms collapse "wrong password" and "room not found"
+            # into one message so adversaries can't probe for room existence.
+            if reason == "auth_failed":
+                msg = "wrong password, or this room no longer exists"
+            elif reason == "locked":
+                ms = data.get("retryAfterMs", 60_000)
+                msg = f"too many attempts — try again in {max(1, ms // 1000)}s"
+            elif reason in ("room full", "capacity"):
+                msg = "private room is full"
+            else:
+                msg = reason
+        else:
+            msg = reason
+
+        # If we never made it past room:joined, bail back to the lobby with
+        # the error pre-rendered. Otherwise (we WERE in the room and the
+        # server kicked us mid-session) keep the UI alive and just toast —
+        # rare path, but trapping the user in the lobby would be jarring.
+        if not self._joined:
+            self.join_error = msg
+            self.exit()
+            return
+
+        self.notify(f"could not join: {msg}", severity="error", timeout=8)
+        self._post_system(f"could not join: {msg}")
 
     async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")
@@ -1562,7 +1935,13 @@ class VauxApp(App):
             self._post_system("message too long (max 300 chars)")
             return
 
-        await self.socket.send_chat(self.room_id, text)
+        if self.is_private:
+            cipher = encrypt_chat(self._chat_key, text)
+            await self.socket.send_chat(
+                self.room_id, ct=cipher["ct"], nonce=cipher["nonce"],
+            )
+        else:
+            await self.socket.send_chat(self.room_id, text)
         inp.value = ""
 
     # ── list selection — queue and search results ──────────────────────────
@@ -1695,6 +2074,24 @@ class VauxApp(App):
         self.query_one("#now-playing", NowPlaying).update_volume(self.volume)
 
     def action_copy_room(self):
+        if self.is_private:
+            if not self._password:
+                # CLI knows the API origin (server_url), not the web origin —
+                # can't synthesize a clickable URL. We copy the bare password
+                # which parse_invite() accepts on both web and CLI.
+                self.notify(
+                    "Invite code unavailable in this session",
+                    severity="warning",
+                    timeout=4,
+                )
+                return
+            try:
+                pyperclip.copy(self._password)
+                self.notify("Private code copied", timeout=2)
+            except pyperclip.PyperclipException:
+                self.notify("Clipboard unavailable", severity="error", timeout=3)
+            return
+
         try:
             pyperclip.copy(self.room_id)
             self.notify("Room name copied!", timeout=2)

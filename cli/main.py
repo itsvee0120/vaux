@@ -12,8 +12,18 @@ import shutil
 import sys
 from importlib.metadata import version, PackageNotFoundError
 
+import asyncio
+
 import click
 from vaux.app import VauxApp, LobbyApp
+from vaux.crypto import (
+    auth_proof_to_b64,
+    derive_room_material,
+    encrypt_chat,
+    is_well_formed_password,
+    parse_invite,
+)
+from vaux.socket_client import probe_join
 from vaux.mpv import ensure_mpv
 
 # ----------------------------------------------------------------------
@@ -97,36 +107,102 @@ def cli(ctx, server, debug, username, show_version, show_path, room_id):
     ensure_mpv()
     ensure_ytdlp()
 
-    # ------------------------
-    # quick join
-    # ------------------------
-    if room_id and username:
-        VauxApp(
-            room_id=room_id,
-            username=username,
-            server_url=server,
-        ).run()
-        return
+    # `room_id` arg is a private invite URL (or raw 22-char password) when it
+    # parses as one. We extract the password and route through the private
+    # quick-join path. Public room names like "velvet-orbit-42" never match.
+    invite_password: str | None = parse_invite(room_id) if room_id else None
 
     # ------------------------
-    # lobby fallback
+    # quick join (one-shot — falls through to lobby loop on failure so the
+    # user sees the error there instead of being trapped inside an empty room).
     # ------------------------
-    if room_id and not username:
+    quick_error: str | None = None
+    initial_invite: str | None = invite_password
+
+    if room_id and username and not invite_password:
+        # Probe BEFORE launching VauxApp so a rejected join (room doesn't
+        # exist, full, etc.) never flashes the room UI — the error lands
+        # at the terminal level and we drop into the lobby.
+        click.echo("Connecting…", err=False)
+        err = asyncio.run(probe_join(server, room_id, username, is_private=False))
+        if err:
+            quick_error = err
+        else:
+            VauxApp(
+                room_id=room_id, username=username, server_url=server,
+            ).run()
+            return
+
+    elif invite_password and username:
+        click.echo("Deriving keys (argon2id)…", err=False)
+        material = derive_room_material(invite_password)
+        cipher = encrypt_chat(material.chat_key, username)
+        click.echo("Connecting…", err=False)
+        err = asyncio.run(
+            probe_join(
+                server,
+                material.room_id,
+                cipher,
+                is_private=True,
+                auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                create=False,  # quick-join via URL never creates
+            )
+        )
+        if err:
+            quick_error = err
+        else:
+            VauxApp(
+                room_id=material.room_id,
+                username=username,
+                server_url=server,
+                is_private=True,
+                auth_proof_b64=auth_proof_to_b64(material.auth_proof),
+                chat_key=material.chat_key,
+                password=invite_password,
+            ).run()
+            return
+
+    # ------------------------
+    # lobby loop — re-opens on any failed join so the user can correct the
+    # mistake (wrong room id, wrong invite code) without restarting vaux.
+    # ------------------------
+    if room_id and not username and not quick_error:
         click.echo("Pass -u <name> to quick-join this room directly.")
 
-    lobby = LobbyApp(server_url=server)
-    lobby.run()
+    next_error: str | None = quick_error
+    next_invite: str | None = initial_invite
 
-    if lobby.result is None:
-        return
+    while True:
+        lobby = LobbyApp(
+            server_url=server,
+            initial_invite=next_invite,
+            initial_error=next_error,
+        )
+        lobby.run()
 
-    room_id, username = lobby.result
+        if lobby.result is None:
+            return
 
-    VauxApp(
-        room_id=room_id,
-        username=username,
-        server_url=server,
-    ).run()
+        sel = lobby.result
+        app = VauxApp(
+            room_id=sel.room_id,
+            username=sel.username,
+            server_url=server,
+            is_private=sel.is_private,
+            auth_proof_b64=sel.auth_proof_b64,
+            chat_key=sel.chat_key,
+            password=sel.password,
+            create_private=sel.create,
+        )
+        app.run()
+
+        if not app.join_error:
+            return
+
+        # Preserve the password the user just tried so they don't have to
+        # paste it again — they may have just typed their name wrong.
+        next_error = app.join_error
+        next_invite = sel.password if sel.is_private else None
 
 @cli.command()
 def bug():
