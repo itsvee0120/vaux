@@ -20,14 +20,8 @@ async def probe_join(
     create: bool = False,
     timeout: float = 6.0,
 ) -> str | None:
-    """Run a join handshake on a throwaway socket. Returns None on success,
-    a human-friendly error message on failure. Used to validate credentials
-    BEFORE launching VauxApp so a rejected join never flashes the room UI.
-
-    The server sees two joins (probe + real) and a leave in between, which
-    starts the 5 s blip timer for private rooms. VauxApp's real join cancels
-    that timer well before it fires.
-    """
+    """Validate credentials via room:join { probe: true } — no member row, no
+    join/leave broadcasts. Returns None on success, else an error string."""
     sio = socketio.AsyncClient(reconnection=False)
     result: dict = {}
     done = asyncio.Event()
@@ -45,7 +39,7 @@ async def probe_join(
 
     try:
         await sio.connect(server_url, transports=["websocket", "polling"])
-        payload: dict = {"roomId": room_id, "username": username}
+        payload: dict = {"roomId": room_id, "username": username, "probe": True}
         if auth_proof_b64:
             payload["authProof"] = auth_proof_b64
             if create:

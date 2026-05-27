@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import json
+import time
 import socket
 import pyperclip
 from importlib.metadata import PackageNotFoundError, version
@@ -1303,6 +1304,8 @@ class VauxApp(App):
         # userId → decrypted display name. Server never sees these for private
         # rooms; we maintain the mapping locally per session.
         self._name_cache: dict[str, str] = {}
+        # De-dupe duplicate "X left" events in quick succession.
+        self._left_announced: dict[str, float] = {}
 
         self.socket = VauxSocket(server_url)
         # Real identity is the server-assigned UUID we get back in room:joined.
@@ -1431,6 +1434,9 @@ class VauxApp(App):
 
     # ── socket event wiring ────────────────────────────────────────────────
     def _register_socket_events(self):
+        if getattr(self, "_socket_events_registered", False):
+            return
+        self._socket_events_registered = True
         self.socket.on("room:joined", self._on_room_joined)
         self.socket.on("room:member_joined", self._on_member_joined)
         self.socket.on("room:member_left", self._on_member_left)
@@ -1472,6 +1478,7 @@ class VauxApp(App):
     async def _on_room_joined(self, data: dict):
         try:
             self._joined = True
+            self._left_announced.clear()
             self.user_id = data.get("userId", "")
             self.role = data.get("role", "listener")
             self.is_host = self.role == "host"
@@ -1514,25 +1521,37 @@ class VauxApp(App):
 
     async def _on_member_joined(self, data: dict):
         user_id = data.get("userId")
-        if not user_id or any(m.get("userId") == user_id for m in self.members):
+        if not user_id:
             return
         if self.is_private:
             uname = self._decrypt_name(data.get("usernameCipher")) or "anon"
             self._name_cache[user_id] = uname
         else:
             uname = data.get("username", "?")
+        for member in self.members:
+            if member.get("userId") == user_id:
+                member["username"] = uname
+                return
         self.members.append(
             {"userId": user_id, "username": uname, "role": "listener"},
         )
         self._post_system(f"{uname} joined")
 
     async def _on_member_left(self, data: dict):
-        uid = data.get("userId", "?")
+        uid = data.get("userId")
+        if not uid:
+            return
+        now = time.time()
+        last = self._left_announced.get(uid)
+        if last is not None and now - last < 10:
+            return
+        self._left_announced[uid] = now
         left = next((m for m in self.members if m.get("userId") == uid), None)
+        if not left:
+            return
         self.members = [m for m in self.members if m.get("userId") != uid]
-        name = left.get("username", uid) if left else uid
         self._name_cache.pop(uid, None)
-        self._post_system(f"{name} left")
+        self._post_system(f"{left.get('username', uid)} left")
         self._update_header_subtitle()
 
     async def _on_host_changed(self, data: dict):

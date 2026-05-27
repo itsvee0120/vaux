@@ -27,6 +27,7 @@ import {
   decryptChat,
   deriveRoomMaterial,
   encryptChat,
+  isWellFormedPassword,
 } from "@/lib/crypto";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
@@ -126,6 +127,8 @@ export default function Home() {
   /** Decrypted username lookup by userId — used by chat:message to render
    *  sender names from server-omitted private chat payloads. */
   const memberNamesRef = useRef<Map<string, string>>(new Map());
+  /** Prevent duplicate "X left" system log spam. */
+  const leftAnnouncedRef = useRef<Map<string, number>>(new Map());
 
   const restoring =
     hydrated && session !== null && screen === "lobby" && !rejoinFailed;
@@ -202,6 +205,7 @@ export default function Home() {
             });
           }
           memberNamesRef.current = lookup;
+          leftAnnouncedRef.current.clear();
           setMembers(decrypted);
           setScreen("room");
           setRejoinFailed(false);
@@ -214,6 +218,7 @@ export default function Home() {
             role: m.role,
           })),
         );
+        leftAnnouncedRef.current.clear();
         setScreen("room");
         setRejoinFailed(false);
       }
@@ -235,26 +240,39 @@ export default function Home() {
             ? ((await decryptName(usernameCipher)) ?? "(unknown)")
             : (joinedUsername ?? "");
           if (usernameCipher) memberNamesRef.current.set(userId, name);
-          setMembers((prev) =>
-            prev.find((m) => m.userId === userId)
-              ? prev
-              : [...prev, { userId, username: name, role: "listener" }],
-          );
-          setMessages((p) => [
-            ...p,
-            { username: "", text: `${name} joined`, system: true },
-          ]);
+          let announceJoin = false;
+          setMembers((prev) => {
+            if (prev.some((m) => m.userId === userId)) {
+              return prev.map((m) =>
+                m.userId === userId ? { ...m, username: name } : m,
+              );
+            }
+            announceJoin = true;
+            return [...prev, { userId, username: name, role: "listener" }];
+          });
+          if (announceJoin) {
+            setMessages((p) => [
+              ...p,
+              { username: "", text: `${name} joined`, system: true },
+            ]);
+          }
         })();
       },
     );
 
     socket.on("room:member_left", ({ userId }: { userId: string }) => {
       setMembers((prev) => {
-        const name = prev.find((m) => m.userId === userId)?.username ?? userId;
+        const now = Date.now();
+        const last = leftAnnouncedRef.current.get(userId);
+        if (last && now - last < 10_000) return prev;
+
+        const left = prev.find((m) => m.userId === userId);
+        if (!left) return prev;
+        leftAnnouncedRef.current.set(userId, now);
         memberNamesRef.current.delete(userId);
         setMessages((p) => [
           ...p,
-          { username: "", text: `${name} left`, system: true },
+          { username: "", text: `${left.username} left`, system: true },
         ]);
         return prev.filter((m) => m.userId !== userId);
       });
@@ -507,6 +525,10 @@ export default function Home() {
   }) {
     const user = username.trim();
     if (!user) return;
+    if (!isWellFormedPassword(password)) {
+      setJoinError("Invalid invite code.");
+      return;
+    }
     setJoinError(null);
     setRejoinFailed(false);
     setIsPrivate(true);
