@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import type { PlaybackState } from "@/lib/playback";
 import { getSyncedPosition } from "@/lib/playback";
@@ -145,14 +145,14 @@ export function LobbyPage({
   // usernames) and clients map `addedById` against the locally-decrypted
   // member list. Falls back to a generic placeholder if the member left
   // before this client received their member_joined event.
-  const nameForAddedBy = (track: Track): string => {
+  const nameForAddedBy = useCallback((track: Track): string => {
     if (track.addedBy) return track.addedBy;
     if (track.addedById) {
       const member = members.find((m) => m.userId === track.addedById);
       if (member?.username) return member.username;
     }
     return "anon";
-  };
+  }, [members]);
   // Track viewport so we can render exactly one layout tree instead of two.
   // Rendering both via Tailwind hidden/lg:flex would double-mount the
   // YoutubePlayer (real YT.Player instance) and the chatEndRef — both must be
@@ -228,7 +228,15 @@ export function LobbyPage({
         onClick: () => setActiveTab("queue"),
       },
     });
-  }, [queue, isDesktop, activeTab, username, notificationsReady]);
+  }, [
+    queue,
+    isDesktop,
+    activeTab,
+    username,
+    notificationsReady,
+    userId,
+    nameForAddedBy,
+  ]);
 
   useEffect(() => {
     const prev = prevMessagesLenRef.current;
