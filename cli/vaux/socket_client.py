@@ -20,14 +20,8 @@ async def probe_join(
     create: bool = False,
     timeout: float = 6.0,
 ) -> str | None:
-    """Run a join handshake on a throwaway socket. Returns None on success,
-    a human-friendly error message on failure. Used to validate credentials
-    BEFORE launching VauxApp so a rejected join never flashes the room UI.
-
-    The server sees two joins (probe + real) and a leave in between, which
-    starts the 5 s blip timer for private rooms. VauxApp's real join cancels
-    that timer well before it fires.
-    """
+    """Validate credentials via room:join { probe: true } — no member row, no
+    join/leave broadcasts. Returns None on success, else an error string."""
     sio = socketio.AsyncClient(reconnection=False)
     result: dict = {}
     done = asyncio.Event()
@@ -45,7 +39,7 @@ async def probe_join(
 
     try:
         await sio.connect(server_url, transports=["websocket", "polling"])
-        payload: dict = {"roomId": room_id, "username": username}
+        payload: dict = {"roomId": room_id, "username": username, "probe": True}
         if auth_proof_b64:
             payload["authProof"] = auth_proof_b64
             if create:
@@ -109,6 +103,19 @@ class VauxSocket:
     async def disconnect(self):
         await self.sio.disconnect()
 
+    @property
+    def connected(self) -> bool:
+        return bool(self.sio.connected)
+
+    async def _emit(self, event: str, payload: dict) -> bool:
+        try:
+            await self.sio.emit(event, payload)
+            return True
+        except socketio.exceptions.BadNamespaceError:
+            return False
+        except Exception:
+            return False
+
     # ── emit helpers — mirrors web client emit calls ───────────────────────
     async def join_room(
         self,
@@ -127,7 +134,7 @@ class VauxSocket:
             payload["authProof"] = auth_proof_b64
             if create:
                 payload["create"] = True
-        await self.sio.emit("room:join", payload)
+        await self._emit("room:join", payload)
 
     async def send_chat(
         self,
@@ -146,16 +153,16 @@ class VauxSocket:
             payload["nonce"] = nonce
         else:
             payload["text"] = text or ""
-        await self.sio.emit("chat:send", payload)
+        return await self._emit("chat:send", payload)
 
     async def destroy_room(self, room_id: str):
         """Host-only burn for private rooms — server immediately deletes
         the room and force-disconnects all sockets. No-op on public rooms."""
-        await self.sio.emit("room:destroy", {"roomId": room_id})
+        return await self._emit("room:destroy", {"roomId": room_id})
 
     async def add_to_queue(self, room_id: str, video_id: str, title: str,
                            channel: str, thumbnail: str, duration: float = 0.0):
-        await self.sio.emit("queue:add", {
+        return await self._emit("queue:add", {
             "roomId": room_id,
             "videoId": video_id,
             "title": title,
@@ -165,53 +172,53 @@ class VauxSocket:
         })
 
     async def vote(self, room_id: str, item_id: str, value: int):
-        await self.sio.emit("queue:vote", {
+        return await self._emit("queue:vote", {
             "roomId": room_id,
             "itemId": item_id,
             "value": value,
         })
 
     async def remove_from_queue(self, room_id: str, item_id: str):
-        await self.sio.emit("queue:remove", {
+        return await self._emit("queue:remove", {
             "roomId": room_id,
             "itemId": item_id,
         })
 
     async def play(self, room_id: str, position_seconds: float):
-        await self.sio.emit("playback:play", {
+        return await self._emit("playback:play", {
             "roomId": room_id,
             "positionSeconds": position_seconds,
         })
 
     async def pause(self, room_id: str, position_seconds: float):
-        await self.sio.emit("playback:pause", {
+        return await self._emit("playback:pause", {
             "roomId": room_id,
             "positionSeconds": position_seconds,
         })
 
     async def seek(self, room_id: str, position_seconds: float):
-        await self.sio.emit("playback:seek", {
+        return await self._emit("playback:seek", {
             "roomId": room_id,
             "positionSeconds": position_seconds,
         })
 
     async def play_track(self, room_id: str, item_id: str):
-        await self.sio.emit("playback:play_track", {
+        return await self._emit("playback:play_track", {
             "roomId": room_id,
             "itemId": item_id,
         })
 
     async def ended(self, room_id: str):
-        await self.sio.emit("playback:ended", {"roomId": room_id})
+        return await self._emit("playback:ended", {"roomId": room_id})
 
     async def transfer_host(self, room_id: str, new_host_id: str):
-        await self.sio.emit("host:transfer", {
+        return await self._emit("host:transfer", {
             "roomId": room_id,
             "newHostId": new_host_id,
         })
 
     async def send_reaction(self, room_id: str, emoji: str):
-        await self.sio.emit("reaction:send", {
+        return await self._emit("reaction:send", {
             "roomId": room_id,
             "emoji": emoji,
         })

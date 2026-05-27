@@ -180,6 +180,254 @@ describe("private room: lockout after repeated wrong passwords", () => {
   );
 });
 
+describe("private room: probe join", () => {
+  it("does not add a member or broadcast join/leave", async () => {
+    const roomId = freshRoomId();
+    const proof = freshAuthProof();
+
+    const host = connect();
+    await waitForConnect(host);
+    host.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+      create: true,
+    });
+    await once(host, "room:joined");
+    expect(rooms[roomId].members).toHaveLength(1);
+
+    let leaked = false;
+    host.on("room:member_joined", () => {
+      leaked = true;
+    });
+    host.on("room:member_left", () => {
+      leaked = true;
+    });
+
+    const probe = connect();
+    await waitForConnect(probe);
+    probe.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+      probe: true,
+    });
+    const res = await once(probe, "room:joined");
+    expect(res.probe).toBe(true);
+    await probe.disconnect();
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(rooms[roomId].members).toHaveLength(1);
+    expect(leaked).toBe(false);
+
+    host.disconnect();
+  }, 5000);
+});
+
+describe("private room: stale member prune", () => {
+  it("drops ghost members on join without member_left", async () => {
+    const roomId = freshRoomId();
+    const proof = freshAuthProof();
+    const staleId = "00000000-0000-0000-0000-000000000099";
+
+    const host = connect();
+    await waitForConnect(host);
+    host.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+      create: true,
+    });
+    await once(host, "room:joined");
+    rooms[roomId].members.push({
+      userId: staleId,
+      usernameCipher: freshCipher(),
+      role: "listener",
+    });
+
+    const guest = connect();
+    await waitForConnect(guest);
+    let left = false;
+    host.on("room:member_left", () => {
+      left = true;
+    });
+    guest.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+    });
+    await once(guest, "room:joined");
+    expect(left).toBe(false);
+    expect(rooms[roomId].members.some((m) => m.userId === staleId)).toBe(false);
+    expect(rooms[roomId].members).toHaveLength(2);
+
+    host.disconnect();
+    guest.disconnect();
+  }, 5000);
+});
+
+describe("private room: join lifecycle", () => {
+  it("leaves the previous room when the same socket joins another", async () => {
+    const roomA = freshRoomId();
+    const roomB = freshRoomId();
+    const proofA = freshAuthProof();
+    const proofB = freshAuthProof();
+
+    const sock = connect();
+    await waitForConnect(sock);
+
+    sock.emit("room:join", {
+      roomId: roomA,
+      username: freshCipher(),
+      authProof: proofA,
+      create: true,
+    });
+    await once(sock, "room:joined");
+    expect(rooms[roomA].members).toHaveLength(1);
+
+    sock.emit("room:join", {
+      roomId: roomB,
+      username: freshCipher(),
+      authProof: proofB,
+      create: true,
+    });
+    await once(sock, "room:joined");
+
+    expect(rooms[roomA].members).toHaveLength(0);
+    expect(rooms[roomB].members).toHaveLength(1);
+
+    sock.disconnect();
+  }, 5000);
+
+  it("updates usernameCipher when the same userId rejoins the same room", async () => {
+    const roomId = freshRoomId();
+    const proof = freshAuthProof();
+    const cipher1 = { ct: "YQ==", nonce: "bm9uY2U=" };
+    const cipher2 = { ct: "Yg==", nonce: "bm9uY2U=" };
+
+    const sock = connect();
+    await waitForConnect(sock);
+
+    sock.emit("room:join", {
+      roomId,
+      username: cipher1,
+      authProof: proof,
+      create: true,
+    });
+    const first = await once(sock, "room:joined");
+    expect(first.userId).toBeTruthy();
+    expect(rooms[roomId].members[0].usernameCipher).toEqual(cipher1);
+
+    sock.emit("room:join", {
+      roomId,
+      username: cipher2,
+      authProof: proof,
+    });
+    await once(sock, "room:joined");
+
+    expect(rooms[roomId].members).toHaveLength(1);
+    expect(rooms[roomId].members[0].usernameCipher).toEqual(cipher2);
+
+    sock.disconnect();
+  }, 5000);
+});
+
+describe("private room: joined-room authz", () => {
+  it("rejects chat:send to a room the socket did not join", async () => {
+    const roomA = freshRoomId();
+    const roomB = freshRoomId();
+    const proofA = freshAuthProof();
+    const proofB = freshAuthProof();
+
+    const a = connect();
+    const b = connect();
+    await waitForConnect(a);
+    await waitForConnect(b);
+
+    a.emit("room:join", {
+      roomId: roomA,
+      username: freshCipher(),
+      authProof: proofA,
+      create: true,
+    });
+    await once(a, "room:joined");
+
+    b.emit("room:join", {
+      roomId: roomB,
+      username: freshCipher(),
+      authProof: proofB,
+      create: true,
+    });
+    await once(b, "room:joined");
+
+    let leaked = false;
+    a.on("chat:message", () => {
+      leaked = true;
+    });
+
+    b.emit("chat:send", {
+      roomId: roomA,
+      ct: "ZHVtbXk=",
+      nonce: "bm9uY2U=",
+    });
+
+    await new Promise((r) => setTimeout(r, 100));
+    expect(leaked).toBe(false);
+
+    a.disconnect();
+    b.disconnect();
+  }, 5000);
+});
+
+describe("private room: host transfer then host disconnects", () => {
+  it("emits member_left once for the leaving host", async () => {
+    const roomId = freshRoomId();
+    const proofA = freshAuthProof();
+    const proofB = freshAuthProof();
+
+    // hostA creates the room.
+    const hostA = connect();
+    await waitForConnect(hostA);
+    hostA.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proofA,
+      create: true,
+    });
+    const joinedA = await once(hostA, "room:joined");
+    const hostAUserId = joinedA.userId;
+
+    // hostB joins with the same invite material (same auth proof).
+    const hostB = connect();
+    await waitForConnect(hostB);
+    hostB.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proofA,
+    });
+    const joinedB = await once(hostB, "room:joined");
+    const hostBUserId = joinedB.userId;
+
+    const leftUserIds = [];
+    hostB.on("room:member_left", (d) => {
+      leftUserIds.push(d.userId);
+    });
+
+    hostA.emit("host:transfer", { roomId, newHostId: hostBUserId });
+    // Ensure role transfer happens before we disconnect the old host.
+    await once(hostB, "host:changed");
+
+    hostA.disconnect();
+
+    await new Promise((r) => setTimeout(r, 100));
+    const count = leftUserIds.filter((id) => id === hostAUserId).length;
+    expect(count).toBe(1);
+    expect(leftUserIds).toHaveLength(1);
+
+    hostB.disconnect();
+  }, 5000);
+});
+
 describe("private room: room:destroy authz", () => {
   it("non-host emit does not delete the room", async () => {
     const roomId = freshRoomId();
@@ -219,23 +467,37 @@ describe("private room: room:destroy authz", () => {
 
   it("host emit deletes the room immediately", async () => {
     const roomId = freshRoomId();
+    const proof = freshAuthProof();
     const host = connect();
     await waitForConnect(host);
     host.emit("room:join", {
       roomId,
       username: freshCipher(),
-      authProof: freshAuthProof(),
+      authProof: proof,
       create: true,
     });
     await once(host, "room:joined");
     expect(rooms[roomId]).toBeTruthy();
 
+    const listener = connect();
+    await waitForConnect(listener);
+    listener.emit("room:join", {
+      roomId,
+      username: freshCipher(),
+      authProof: proof,
+    });
+    await once(listener, "room:joined");
+
+    const endedPromise = once(listener, "room:ended");
     host.emit("room:destroy", { roomId });
+    const ended = await endedPromise;
+    expect(ended.reason).toBe("host_left_without_transfer");
 
     // Per spec the burn is immediate — give a tick for the handler to run.
     await new Promise((r) => setTimeout(r, 50));
     expect(rooms[roomId]).toBeUndefined();
 
     host.disconnect();
+    listener.disconnect();
   }, 5000);
 });

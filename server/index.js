@@ -421,6 +421,79 @@ function getMember(room, userId) {
   return room.members.find((m) => m.userId === userId);
 }
 
+// Every post-join handler takes a client-supplied roomId. Reject unless it
+// matches socket.data.roomId and this socket is still a listed member.
+function getJoinedRoom(socket, roomId) {
+  if (typeof roomId !== "string" || !roomId) return null;
+  if (socket.data?.roomId !== roomId) return null;
+  const room = getRoom(roomId);
+  if (!room || !getMember(room, socket.data.userId)) return null;
+  return room;
+}
+
+// Drop member rows whose userId has no live socket in the room (stale tabs,
+// crashed clients, probe-era ghosts). Silent — no member_left broadcast.
+function pruneDisconnectedMembers(roomId) {
+  const room = getRoom(roomId);
+  if (!room) return;
+  const adapter = io.sockets.adapter.rooms.get(roomId);
+  if (!adapter) {
+    room.members = [];
+    return;
+  }
+  const live = new Set();
+  for (const sid of adapter) {
+    const sock = io.sockets.sockets.get(sid);
+    if (sock?.data?.userId) live.add(sock.data.userId);
+  }
+  room.members = room.members.filter((m) => live.has(m.userId));
+}
+
+// Shared leave path for disconnect and room:join switching rooms.
+function removeMemberFromRoom(socket, roomId) {
+  const room = getRoom(roomId);
+  const userId = socket.data?.userId;
+  if (!room || !userId) return;
+  if (socket.data._removedFrom === roomId) return;
+
+  const leaving = getMember(room, userId);
+  if (!leaving) return;
+  socket.data._removedFrom = roomId;
+
+  const wasHost = leaving.role === "host";
+  room.members = room.members.filter((m) => m.userId !== userId);
+
+  if (socket.connected) socket.leave(roomId);
+  socket.to(roomId).emit("room:member_left", { userId });
+
+  if (wasHost && room.members.length > 0) {
+    const newHost = room.members[0];
+    newHost.role = "host";
+    io.to(roomId).emit("host:changed", {
+      newHostId: newHost.userId,
+      newHostUsername: room.private ? undefined : newHost.username,
+      newHostUsernameCipher: room.private
+        ? newHost.usernameCipher
+        : undefined,
+    });
+  }
+
+  if (room.members.length === 0) {
+    scheduleRoomCleanup(roomId);
+  }
+}
+
+function leavePreviousRoom(socket, nextRoomId) {
+  const prevId = socket.data?.roomId;
+  if (!prevId || prevId === nextRoomId) return;
+  removeMemberFromRoom(socket, prevId);
+  socket.data.roomId = undefined;
+  if (socket.data.private) {
+    socket.data.private = false;
+    socket.data.usernameCipher = undefined;
+  }
+}
+
 function isHost(socket, room) {
   if (!room) return false;
   const member = getMember(room, socket.data?.userId);
@@ -466,7 +539,7 @@ function advanceToNextTrack(room, roomId) {
 
 async function joinPrivateRoom(
   socket,
-  { roomId, usernameCipher, authProofB64, create, userId },
+  { roomId, usernameCipher, authProofB64, create, userId, probe },
 ) {
   if (!PRIVATE_ROOM_ID_REGEX.test(roomId)) {
     socket.emit("room:join_failed", { reason: "auth_failed" });
@@ -501,6 +574,10 @@ async function joinPrivateRoom(
     }
     if (Object.keys(rooms).length >= MAX_ROOMS) {
       socket.emit("room:join_failed", { reason: "capacity" });
+      return;
+    }
+    if (probe) {
+      socket.emit("room:joined", { probe: true, private: true });
       return;
     }
     let authHash;
@@ -538,11 +615,11 @@ async function joinPrivateRoom(
       socket.emit("room:join_failed", { reason: "auth_failed" });
       return;
     }
-    cancelCleanupTimer(room);
-    logPrivate("auth ok");
+    if (!probe) {
+      cancelCleanupTimer(room);
+      logPrivate("auth ok");
+    }
   }
-
-  clearLockout(roomId);
 
   if (
     !getMember(room, userId) &&
@@ -552,15 +629,30 @@ async function joinPrivateRoom(
     return;
   }
 
+  if (probe) {
+    socket.emit("room:joined", { probe: true, private: true });
+    return;
+  }
+
+  clearLockout(roomId);
+
+  leavePreviousRoom(socket, roomId);
+
   socket.join(roomId);
   socket.data.roomId = roomId;
+  delete socket.data._removedFrom;
   // Server has no plaintext username for private members. Use the userId
   // as the chat-send identity gate — non-empty means "joined a room".
   socket.data.username = userId;
   socket.data.usernameCipher = usernameCipher;
   socket.data.private = true;
+  pruneDisconnectedMembers(roomId);
 
-  if (!getMember(room, userId)) {
+  const existing = getMember(room, userId);
+  if (existing) {
+    existing.usernameCipher = usernameCipher;
+    socket.to(roomId).emit("room:member_joined", { userId, usernameCipher });
+  } else {
     room.members.push({
       userId,
       usernameCipher,
@@ -625,12 +717,13 @@ io.on("connection", (socket) => {
   // client sends a weak value here, the room is only as strong as that
   // value. The server cannot enforce derivation; this is a client-side
   // contract. See PRIVATE_ROOMS_SPEC.md.
-  socket.on("room:join", async ({ roomId, username, authProof, create }) => {
+  socket.on("room:join", async ({ roomId, username, authProof, create, probe }) => {
     if (!joinLimiter(socket, "join")) return;
     if (typeof roomId !== "string" || !roomId.trim()) return;
 
     const userId = socket.data.userId;
     const wantsPrivate = authProof !== undefined;
+    const isProbe = Boolean(probe);
 
     if (wantsPrivate) {
       // Private rooms ship username as { ct, nonce } (encrypted with chatKey).
@@ -646,6 +739,7 @@ io.on("connection", (socket) => {
         authProofB64: authProof,
         create: Boolean(create),
         userId,
+        probe: isProbe,
       });
       return;
     }
@@ -661,7 +755,37 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const room = getOrCreateRoom(roomId);
+    let room = getRoom(roomId);
+
+    if (isProbe) {
+      if (!room) {
+        if (Object.keys(rooms).length >= MAX_ROOMS) {
+          socket.emit("room:join_failed", {
+            reason: "server at capacity, try again later",
+          });
+          return;
+        }
+        socket.emit("room:joined", { probe: true });
+        return;
+      }
+      if (room.private) {
+        socket.emit("room:join_failed", {
+          reason: "server at capacity, try again later",
+        });
+        return;
+      }
+      if (
+        !getMember(room, userId) &&
+        room.members.length >= MAX_MEMBERS_PER_ROOM
+      ) {
+        socket.emit("room:join_failed", { reason: "room full" });
+        return;
+      }
+      socket.emit("room:joined", { probe: true });
+      return;
+    }
+
+    room = getOrCreateRoom(roomId);
     if (!room) {
       // Either at MAX_ROOMS or this roomId belongs to a private room and
       // can't be joined via the public flow. Same generic message either way.
@@ -679,11 +803,22 @@ io.on("connection", (socket) => {
       return;
     }
 
+    leavePreviousRoom(socket, roomId);
+
     socket.join(roomId);
     socket.data.roomId = roomId;
+    delete socket.data._removedFrom;
     socket.data.username = cleanName;
+    pruneDisconnectedMembers(roomId);
 
-    if (!getMember(room, userId)) {
+    const existing = getMember(room, userId);
+    if (existing) {
+      existing.username = cleanName;
+      socket.to(roomId).emit("room:member_joined", {
+        userId,
+        username: cleanName,
+      });
+    } else {
       room.members.push({
         userId,
         username: cleanName,
@@ -708,10 +843,14 @@ io.on("connection", (socket) => {
   });
 
   socket.on("room:destroy", ({ roomId }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!room || !room.private) return;
     if (!isHost(socket, room)) return;
     cancelCleanupTimer(room);
+    io.to(roomId).emit("room:ended", {
+      reason: "host_left_without_transfer",
+      roomId,
+    });
     io.in(roomId).disconnectSockets(true);
     delete rooms[roomId];
     logPrivate("room destroyed by host");
@@ -719,7 +858,7 @@ io.on("connection", (socket) => {
 
   // ── HOST TRANSFER ──
   socket.on("host:transfer", ({ roomId, newHostId }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!room) return;
     if (!isHost(socket, room)) return;
 
@@ -756,7 +895,7 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const room = getRoom(roomId);
+      const room = getJoinedRoom(socket, roomId);
       if (!room) return;
 
       // Hard cap on queue length per room. Rate limiter already throttles
@@ -790,7 +929,7 @@ io.on("connection", (socket) => {
 
   socket.on("queue:vote", ({ roomId, itemId, value }) => {
     if (!voteLimiter(socket, "queue:vote")) return;
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!room) return;
 
     const item = room.queue.find((i) => i.id === itemId);
@@ -805,7 +944,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("queue:remove", ({ roomId, itemId }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!room) return;
     if (!isHost(socket, room)) return;
 
@@ -822,6 +961,7 @@ io.on("connection", (socket) => {
   // opaquely; never inspects content. See PRIVATE_ROOMS_SPEC.md.
   socket.on("chat:send", ({ roomId, text, ct, nonce }) => {
     if (!socket.data.username) return;
+    if (!getJoinedRoom(socket, roomId)) return;
 
     let payload;
     if (socket.data.private) {
@@ -853,7 +993,7 @@ io.on("connection", (socket) => {
 
   // ── PLAYBACK (HOST ONLY) ──
   socket.on("playback:play_track", ({ roomId, itemId }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!isHost(socket, room)) return;
 
     const idx = room.queue.findIndex((i) => i.id === itemId);
@@ -867,7 +1007,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("playback:play", ({ roomId, positionSeconds }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!isHost(socket, room)) return;
 
     room.playbackState.isPlaying = true;
@@ -878,7 +1018,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("playback:pause", ({ roomId, positionSeconds }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!isHost(socket, room)) return;
 
     room.playbackState.isPlaying = false;
@@ -889,7 +1029,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("playback:seek", ({ roomId, positionSeconds }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!isHost(socket, room)) return;
 
     room.playbackState.positionSeconds = positionSeconds;
@@ -899,7 +1039,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("playback:ended", ({ roomId }) => {
-    const room = getRoom(roomId);
+    const room = getJoinedRoom(socket, roomId);
     if (!isHost(socket, room)) return;
 
     advanceToNextTrack(room, roomId);
@@ -907,10 +1047,9 @@ io.on("connection", (socket) => {
 
   // ── DISCONNECT ──
   socket.on("disconnect", () => {
-    const { roomId, userId, private: wasPrivate } = socket.data || {};
-    const room = rooms[roomId];
+    const { roomId, private: wasPrivate } = socket.data || {};
 
-    if (!room) {
+    if (!roomId) {
       if (wasPrivate) {
         logPrivate("socket disconnect (no room)");
       } else {
@@ -919,33 +1058,9 @@ io.on("connection", (socket) => {
       return;
     }
 
-    const leaving = room.members.find((m) => m.userId === userId);
-    const wasHost = leaving?.role === "host";
+    removeMemberFromRoom(socket, roomId);
 
-    room.members = room.members.filter((m) => m.userId !== userId);
-
-    socket.to(roomId).emit("room:member_left", { userId });
-
-    if (wasHost && room.members.length > 0) {
-      const newHost = room.members[0];
-      newHost.role = "host";
-
-      io.to(roomId).emit("host:changed", {
-        newHostId: newHost.userId,
-        newHostUsername: room.private ? undefined : newHost.username,
-        newHostUsernameCipher: room.private
-          ? newHost.usernameCipher
-          : undefined,
-      });
-    }
-
-    // Last member out — schedule TTL cleanup. Cancelled if anyone rejoins
-    // before the timer fires (private rooms: only after a successful auth).
-    if (room.members.length === 0) {
-      scheduleRoomCleanup(roomId);
-    }
-
-    if (room.private) {
+    if (wasPrivate) {
       logPrivate("socket disconnect");
     } else {
       console.log(`[socket] disconnected: ${socket.id}`);

@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import json
+import time
 import socket
 import pyperclip
 from importlib.metadata import PackageNotFoundError, version
@@ -1303,6 +1304,9 @@ class VauxApp(App):
         # userId → decrypted display name. Server never sees these for private
         # rooms; we maintain the mapping locally per session.
         self._name_cache: dict[str, str] = {}
+        # De-dupe duplicate "X left" events in quick succession.
+        self._left_announced: dict[str, float] = {}
+        self._emit_warned = False
 
         self.socket = VauxSocket(server_url)
         # Real identity is the server-assigned UUID we get back in room:joined.
@@ -1431,6 +1435,9 @@ class VauxApp(App):
 
     # ── socket event wiring ────────────────────────────────────────────────
     def _register_socket_events(self):
+        if getattr(self, "_socket_events_registered", False):
+            return
+        self._socket_events_registered = True
         self.socket.on("room:joined", self._on_room_joined)
         self.socket.on("room:member_joined", self._on_member_joined)
         self.socket.on("room:member_left", self._on_member_left)
@@ -1441,6 +1448,7 @@ class VauxApp(App):
         self.socket.on("chat:rate_limited", self._on_chat_rate_limited)
         self.socket.on("queue:full", self._on_queue_full)
         self.socket.on("room:join_failed", self._on_room_join_failed)
+        self.socket.on("room:ended", self._on_room_ended)
         self.socket.on("reaction:broadcast", self._on_reaction)
 
     def _decrypt_name(self, cipher: dict | None) -> str | None:
@@ -1472,6 +1480,8 @@ class VauxApp(App):
     async def _on_room_joined(self, data: dict):
         try:
             self._joined = True
+            self._left_announced.clear()
+            self._emit_warned = False
             self.user_id = data.get("userId", "")
             self.role = data.get("role", "listener")
             self.is_host = self.role == "host"
@@ -1514,25 +1524,37 @@ class VauxApp(App):
 
     async def _on_member_joined(self, data: dict):
         user_id = data.get("userId")
-        if not user_id or any(m.get("userId") == user_id for m in self.members):
+        if not user_id:
             return
         if self.is_private:
             uname = self._decrypt_name(data.get("usernameCipher")) or "anon"
             self._name_cache[user_id] = uname
         else:
             uname = data.get("username", "?")
+        for member in self.members:
+            if member.get("userId") == user_id:
+                member["username"] = uname
+                return
         self.members.append(
             {"userId": user_id, "username": uname, "role": "listener"},
         )
         self._post_system(f"{uname} joined")
 
     async def _on_member_left(self, data: dict):
-        uid = data.get("userId", "?")
+        uid = data.get("userId")
+        if not uid:
+            return
+        now = time.time()
+        last = self._left_announced.get(uid)
+        if last is not None and now - last < 10:
+            return
+        self._left_announced[uid] = now
         left = next((m for m in self.members if m.get("userId") == uid), None)
+        if not left:
+            return
         self.members = [m for m in self.members if m.get("userId") != uid]
-        name = left.get("username", uid) if left else uid
         self._name_cache.pop(uid, None)
-        self._post_system(f"{name} left")
+        self._post_system(f"{left.get('username', uid)} left")
         self._update_header_subtitle()
 
     async def _on_host_changed(self, data: dict):
@@ -1670,6 +1692,24 @@ class VauxApp(App):
         self.notify(f"could not join: {msg}", severity="error", timeout=8)
         self._post_system(f"could not join: {msg}")
 
+    async def _on_room_ended(self, data: dict):
+        reason = data.get("reason")
+        if reason == "host_left_without_transfer":
+            msg = "host left without transfer — room closed"
+        else:
+            msg = "room closed"
+        self.notify(msg, severity="warning", timeout=8)
+        self._post_system(msg)
+        self.join_error = msg
+        self.exit()
+
+    def _warn_emit_disconnected(self) -> None:
+        if self._emit_warned:
+            return
+        self._emit_warned = True
+        self.notify("disconnected from room", severity="warning", timeout=5)
+        self._post_system("disconnected from room")
+
     async def _on_reaction(self, data: dict):
         emoji = data.get("emoji", "")
         self._post_system(emoji)
@@ -1804,7 +1844,9 @@ class VauxApp(App):
     async def _trigger_ended(self):
         """Tells the server the track finished so it can auto-play the next queue item."""
         if self.is_host:
-            await self.socket.ended(self.room_id)
+            ok = await self.socket.ended(self.room_id)
+            if ok is False:
+                self._warn_emit_disconnected()
 
     # ── button handlers ────────────────────────────────────────────────────
     async def on_button_pressed(self, event: Button.Pressed):
@@ -1927,7 +1969,9 @@ class VauxApp(App):
                 if not match:
                     self._post_system(f"no listener named '{target}'")
                 else:
-                    await self.socket.transfer_host(self.room_id, match["userId"])
+                    ok = await self.socket.transfer_host(self.room_id, match["userId"])
+                    if ok is False:
+                        self._warn_emit_disconnected()
             inp.value = ""
             return
 
@@ -1937,11 +1981,14 @@ class VauxApp(App):
 
         if self.is_private:
             cipher = encrypt_chat(self._chat_key, text)
-            await self.socket.send_chat(
+            ok = await self.socket.send_chat(
                 self.room_id, ct=cipher["ct"], nonce=cipher["nonce"],
             )
         else:
-            await self.socket.send_chat(self.room_id, text)
+            ok = await self.socket.send_chat(self.room_id, text)
+        if ok is False:
+            self._warn_emit_disconnected()
+            return
         inp.value = ""
 
     # ── list selection — queue and search results ──────────────────────────
@@ -1952,7 +1999,7 @@ class VauxApp(App):
             idx = event.list_view.index
             if idx is not None and idx < len(self.search_results):
                 r = self.search_results[idx]
-                await self.socket.add_to_queue(
+                ok = await self.socket.add_to_queue(
                     self.room_id,
                     r.video_id,
                     r.title,
@@ -1960,6 +2007,9 @@ class VauxApp(App):
                     r.thumbnail,
                     r.duration,
                 )
+                if ok is False:
+                    self._warn_emit_disconnected()
+                    return
                 self._post_system(f"added: {self._clean_title(r.title)[: self._LOG_TITLE_MAX]}")
                 lv = self.query_one("#search-results", ListView)
                 await lv.clear()
@@ -1970,7 +2020,9 @@ class VauxApp(App):
             idx = event.list_view.index
             if idx is not None and idx < len(self.queue):
                 item = self.queue[idx]
-                await self.socket.play_track(self.room_id, item["id"])
+                ok = await self.socket.play_track(self.room_id, item["id"])
+                if ok is False:
+                    self._warn_emit_disconnected()
 
     # ── keybinding actions ─────────────────────────────────────────────────
     def action_focus_search(self):
@@ -1991,7 +2043,9 @@ class VauxApp(App):
         lv = self.query_one("#queue-list", ListView)
         idx = lv.index
         if idx is not None and idx < len(self.queue):
-            await self.socket.vote(self.room_id, self.queue[idx]["id"], 1)
+            ok = await self.socket.vote(self.room_id, self.queue[idx]["id"], 1)
+            if ok is False:
+                self._warn_emit_disconnected()
 
     async def action_vote_down(self):
         lv = self.query_one("#queue-list", ListView)
@@ -1999,7 +2053,9 @@ class VauxApp(App):
         if idx is not None and idx < len(self.queue):
             item = self.queue[idx]
             if item.get("votes", 0) >= 1:
-                await self.socket.vote(self.room_id, item["id"], -1)
+                ok = await self.socket.vote(self.room_id, item["id"], -1)
+                if ok is False:
+                    self._warn_emit_disconnected()
 
     async def action_toggle_playback(self):
         if not self.is_host or not self.playback.video_id:
@@ -2007,10 +2063,16 @@ class VauxApp(App):
             
         current_pos = self.playback.synced_position()
         if self.playback.is_playing:
-            await self.socket.pause(self.room_id, current_pos)
+            ok = await self.socket.pause(self.room_id, current_pos)
+            if ok is False:
+                self._warn_emit_disconnected()
+                return
             self._post_system("paused playback")
         else:
-            await self.socket.play(self.room_id, current_pos)
+            ok = await self.socket.play(self.room_id, current_pos)
+            if ok is False:
+                self._warn_emit_disconnected()
+                return
             self._post_system("resumed playback")
 
     async def action_skip_track(self):
@@ -2048,7 +2110,10 @@ class VauxApp(App):
         idx = lv.index
         if idx is not None and idx < len(self.queue):
             item = self.queue[idx]
-            await self.socket.remove_from_queue(self.room_id, item["id"])
+            ok = await self.socket.remove_from_queue(self.room_id, item["id"])
+            if ok is False:
+                self._warn_emit_disconnected()
+                return
             self._post_system(f"removed: {item.get('title', '')[:40]}")
 
     def action_volume_down(self):
@@ -2130,4 +2195,6 @@ class VauxApp(App):
         self.push_screen(ListenersModal(self.members, self._transfer_host_from_modal))
 
     async def _transfer_host_from_modal(self, user_id: str) -> None:
-        await self.socket.transfer_host(self.room_id, user_id)
+        ok = await self.socket.transfer_host(self.room_id, user_id)
+        if ok is False:
+            self._warn_emit_disconnected()

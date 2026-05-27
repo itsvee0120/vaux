@@ -27,6 +27,7 @@ import {
   decryptChat,
   deriveRoomMaterial,
   encryptChat,
+  isWellFormedPassword,
 } from "@/lib/crypto";
 
 const SERVER = process.env.NEXT_PUBLIC_SERVER_URL;
@@ -126,6 +127,10 @@ export default function Home() {
   /** Decrypted username lookup by userId — used by chat:message to render
    *  sender names from server-omitted private chat payloads. */
   const memberNamesRef = useRef<Map<string, string>>(new Map());
+  /** Prevent duplicate "X left" system log spam. */
+  const leftAnnouncedRef = useRef<Map<string, number>>(new Map());
+  const roomEndedRef = useRef(false);
+  const disconnectWarnedRef = useRef(false);
 
   const restoring =
     hydrated && session !== null && screen === "lobby" && !rejoinFailed;
@@ -184,6 +189,8 @@ export default function Home() {
       setPlayback(playbackState ?? EMPTY_PLAYBACK);
       setIsHost(role === "host");
       setIsPrivate(isPriv);
+      roomEndedRef.current = false;
+      disconnectWarnedRef.current = false;
 
       if (isPriv) {
         // Decrypt every member's name before showing the room. Any member
@@ -202,6 +209,7 @@ export default function Home() {
             });
           }
           memberNamesRef.current = lookup;
+          leftAnnouncedRef.current.clear();
           setMembers(decrypted);
           setScreen("room");
           setRejoinFailed(false);
@@ -214,6 +222,7 @@ export default function Home() {
             role: m.role,
           })),
         );
+        leftAnnouncedRef.current.clear();
         setScreen("room");
         setRejoinFailed(false);
       }
@@ -235,26 +244,39 @@ export default function Home() {
             ? ((await decryptName(usernameCipher)) ?? "(unknown)")
             : (joinedUsername ?? "");
           if (usernameCipher) memberNamesRef.current.set(userId, name);
-          setMembers((prev) =>
-            prev.find((m) => m.userId === userId)
-              ? prev
-              : [...prev, { userId, username: name, role: "listener" }],
-          );
-          setMessages((p) => [
-            ...p,
-            { username: "", text: `${name} joined`, system: true },
-          ]);
+          let announceJoin = false;
+          setMembers((prev) => {
+            if (prev.some((m) => m.userId === userId)) {
+              return prev.map((m) =>
+                m.userId === userId ? { ...m, username: name } : m,
+              );
+            }
+            announceJoin = true;
+            return [...prev, { userId, username: name, role: "listener" }];
+          });
+          if (announceJoin) {
+            setMessages((p) => [
+              ...p,
+              { username: "", text: `${name} joined`, system: true },
+            ]);
+          }
         })();
       },
     );
 
     socket.on("room:member_left", ({ userId }: { userId: string }) => {
       setMembers((prev) => {
-        const name = prev.find((m) => m.userId === userId)?.username ?? userId;
+        const now = Date.now();
+        const last = leftAnnouncedRef.current.get(userId);
+        if (last && now - last < 10_000) return prev;
+
+        const left = prev.find((m) => m.userId === userId);
+        if (!left) return prev;
+        leftAnnouncedRef.current.set(userId, now);
         memberNamesRef.current.delete(userId);
         setMessages((p) => [
           ...p,
-          { username: "", text: `${name} left`, system: true },
+          { username: "", text: `${left.username} left`, system: true },
         ]);
         return prev.filter((m) => m.userId !== userId);
       });
@@ -304,6 +326,33 @@ export default function Home() {
       setQueue(q),
     );
     socket.on("playback:state", (state: PlaybackState) => setPlayback(state));
+    socket.on(
+      "room:ended",
+      ({ reason }: { reason?: string }) => {
+        roomEndedRef.current = true;
+        const msg =
+          reason === "host_left_without_transfer"
+            ? "Host left without transfer — room closed."
+            : "Room closed.";
+        setMessages((p) => [...p, { username: "", text: msg, system: true }]);
+        setJoinError(msg);
+        setTimeout(() => {
+          const socket = getSocket();
+          if (socket.connected) socket.disconnect();
+          clearSession();
+          privateRef.current = null;
+          memberNamesRef.current = new Map();
+          myUserIdRef.current = "";
+          setScreen("lobby");
+          setRoomId("");
+          setIsPrivate(false);
+          setQueue([]);
+          setMembers([]);
+          setPlayback(EMPTY_PLAYBACK);
+          setIsHost(false);
+        }, 300);
+      },
+    );
 
     socket.on(
       "chat:message",
@@ -411,6 +460,7 @@ export default function Home() {
       socket.off("host:changed");
       socket.off("queue:updated");
       socket.off("playback:state");
+      socket.off("room:ended");
       socket.off("chat:message");
       socket.off("chat:rate_limited");
       socket.off("queue:full");
@@ -460,6 +510,8 @@ export default function Home() {
 
   const emitPlay = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:play", { roomId, positionSeconds });
     },
     [roomId],
@@ -467,6 +519,8 @@ export default function Home() {
 
   const emitPause = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:pause", { roomId, positionSeconds });
     },
     [roomId],
@@ -474,14 +528,36 @@ export default function Home() {
 
   const emitSeek = useCallback(
     (positionSeconds: number) => {
+      if (roomEndedRef.current) return;
+      if (!getSocket().connected) return;
       getSocket().emit("playback:seek", { roomId, positionSeconds });
     },
     [roomId],
   );
 
   const emitEnded = useCallback(() => {
+    if (roomEndedRef.current) return;
+    if (!getSocket().connected) return;
     getSocket().emit("playback:ended", { roomId });
   }, [roomId]);
+
+  function canEmitRoomAction(): boolean {
+    if (roomEndedRef.current) return false;
+    const socket = getSocket();
+    if (socket.connected) return true;
+    if (!disconnectWarnedRef.current) {
+      disconnectWarnedRef.current = true;
+      setMessages((p) => [
+        ...p,
+        {
+          username: "",
+          text: "Disconnected from room — please rejoin.",
+          system: true,
+        },
+      ]);
+    }
+    return false;
+  }
 
   function joinRoom(roomIdOverride?: string) {
     const rid = (roomIdOverride ?? roomId).trim();
@@ -507,6 +583,10 @@ export default function Home() {
   }) {
     const user = username.trim();
     if (!user) return;
+    if (!isWellFormedPassword(password)) {
+      setJoinError("Invalid invite code.");
+      return;
+    }
     setJoinError(null);
     setRejoinFailed(false);
     setIsPrivate(true);
@@ -554,28 +634,33 @@ export default function Home() {
   }
 
   function addToQueue(result: SearchResult) {
+    if (!canEmitRoomAction()) return;
     getSocket().emit("queue:add", { roomId, ...result });
     setSearchResults([]);
     setSearchQuery("");
   }
 
   function vote(itemId: string, value: 1 | -1) {
+    if (!canEmitRoomAction()) return;
     const track = queue.find((t) => t.id === itemId);
     if (value === -1 && (track?.votes ?? 0) < 1) return;
     getSocket().emit("queue:vote", { roomId, itemId, value });
   }
 
   function playTrack(track: Track) {
+    if (!canEmitRoomAction()) return;
     if (!isHost) return;
     getSocket().emit("playback:play_track", { roomId, itemId: track.id });
   }
 
   function removeFromQueue(itemId: string) {
+    if (!canEmitRoomAction()) return;
     if (!isHost) return;
     getSocket().emit("queue:remove", { roomId, itemId });
   }
 
   function sendChat() {
+    if (!canEmitRoomAction()) return;
     const text = chatInput.trim();
     if (!text) return;
     const material = privateRef.current;
@@ -594,6 +679,7 @@ export default function Home() {
   }
 
   function transferHost(newHostId: string) {
+    if (!canEmitRoomAction()) return;
     getSocket().emit("host:transfer", { roomId, newHostId });
   }
 
