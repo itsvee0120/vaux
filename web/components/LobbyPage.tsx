@@ -187,6 +187,8 @@ export function LobbyPage({
   const prevQueueLenRef = useRef(queue.length);
   const prevMessagesLenRef = useRef(messages.length);
   const prevIsHostRef = useRef(isHost);
+  const prevMemberIdsRef = useRef<Set<string>>(new Set());
+  const membersInitializedRef = useRef(false);
   // Toasts/badges are disabled for ~1.5s after mount. That window covers
   // the initial socket payload (queue + chat history + host info) so we
   // don't fire a wave of notifications the moment the user joins.
@@ -266,6 +268,34 @@ export function LobbyPage({
       toast(`👑 ${newHost?.username ?? "Someone else"} is now the host`);
     }
   }, [isHost, isDesktop, members, notificationsReady]);
+
+  useEffect(() => {
+    if (!notificationsReady) return;
+    const prev = prevMemberIdsRef.current;
+    if (!membersInitializedRef.current) {
+      prevMemberIdsRef.current = new Set(
+        members.map((m) => m.userId).filter(Boolean),
+      );
+      membersInitializedRef.current = true;
+      return;
+    }
+    for (const m of members) {
+      if (!m.userId || prev.has(m.userId) || m.userId === userId) continue;
+      toast(`👋 ${m.username} joined`, {
+        ...(isDesktop
+          ? {}
+          : {
+              action: {
+                label: "Chat",
+                onClick: () => setActiveTab("chat"),
+              },
+            }),
+      });
+    }
+    prevMemberIdsRef.current = new Set(
+      members.map((m) => m.userId).filter(Boolean),
+    );
+  }, [members, notificationsReady, userId, isDesktop]);
 
   // --- Render-time state syncs --------------------------------------
   // The three setState calls below used to live inside useEffects, but
@@ -987,10 +1017,9 @@ export function LobbyPage({
       )}
 
       <HelpModal open={helpOpen} onOpenChange={handleHelpOpenChange} />
-      {/* Toaster portals to <body>, so its DOM position doesn't matter.
-          Position is top-center so it never collides with the bottom
-          MobileTabBar. Toasts are only fired in mobile/tab mode (all
-          three notification effects above bail out when isDesktop). */}
+      {/* Toaster portals to <body>. top-center avoids the mobile tab bar;
+          member-join toasts fire on all breakpoints; queue/chat/host toasts
+          are mobile-only. */}
       <Toaster
         position="top-center"
         theme="dark"
