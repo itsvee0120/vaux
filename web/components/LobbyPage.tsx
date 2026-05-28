@@ -464,6 +464,7 @@ export function LobbyPage({
           <YoutubePlayer
             playback={playback}
             isHost={isHost}
+            suppressHostPlaybackEcho={!isDesktop && activeTab !== "player"}
             onPlay={onPlay}
             onPause={onPause}
             onEnded={onEnded}
