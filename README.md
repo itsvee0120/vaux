@@ -18,7 +18,10 @@ https://github.com/user-attachments/assets/32c52cb0-c302-4878-8b1b-299a5fada3b3
 **What's new:** see the [release notes](https://github.com/itsvee0120/vaux/releases) for changes between versions. Click "Watch → Releases only" on the GitHub repo to get notified when a new version ships.
 
 <img width="1011" height="638" alt="vaux_lobby_cli" src="https://github.com/user-attachments/assets/68ab6ebb-26d4-4340-9c69-a18329cc48e7" />
+<img width="1111" height="671" alt="image" src="https://github.com/user-attachments/assets/db1747c8-84e2-4e3d-a530-8c9f95670161" />
+
 <img width="1070" height="638" alt="vaux_room" src="https://github.com/user-attachments/assets/0f6b2ca1-8ab0-4edb-8055-66ac4bb15644" />
+<img width="1100" height="676" alt="image" src="https://github.com/user-attachments/assets/94f549b4-bfb5-4306-9c99-facccd215a58" />
 
 
 
