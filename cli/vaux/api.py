@@ -156,10 +156,12 @@ async def _get_stream_from_server(
     headers = _api_headers()
     try:
         async with httpx.AsyncClient(headers=headers) as client:
+            # Keep this short so we can quickly fall back to local yt-dlp
+            # when Render's extractor is bot-gated/slow.
             resp = await client.get(
                 url,
                 params={"videoId": video_id},
-                timeout=45.0,
+                timeout=12.0,
             )
             if resp.status_code == 200:
                 data = resp.json()

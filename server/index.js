@@ -36,8 +36,8 @@ function ytdlpBaseArgs(playerClients = "tv,web_safari,mweb,default") {
 // Alternate client chains for datacenter IPs (Render, etc.). Tried in order.
 const YTDLP_PLAYER_CLIENT_CHAINS = [
   "tv,web_safari,mweb,default",
-  "android_vr,ios,web",
-  "tv_embedded,web_creator",
+  "web_embedded,tv_embedded",
+  "mweb,web",
 ];
 
 function classifyYtDlpError(message) {
@@ -65,7 +65,11 @@ function classifyYtDlpError(message) {
   return { code: "unknown", error: "could not resolve stream" };
 }
 
-async function ytdlpExecWithClientChains(watchUrl, extraArgs) {
+async function ytdlpExecWithClientChains(
+  watchUrl,
+  extraArgs,
+  { stopOnBotChallenge = false } = {},
+) {
   let lastFailure = classifyYtDlpError("unknown");
   for (const clients of YTDLP_PLAYER_CLIENT_CHAINS) {
     try {
@@ -77,6 +81,7 @@ async function ytdlpExecWithClientChains(watchUrl, extraArgs) {
       return { ok: true, stdout };
     } catch (err) {
       lastFailure = classifyYtDlpError(err.message || String(err));
+      if (stopOnBotChallenge && lastFailure.code === "bot_challenge") break;
     }
   }
   return { ok: false, ...lastFailure };
@@ -166,11 +171,11 @@ app.get("/youtube/search", searchLimiter, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 30);
 
   try {
-    const result = await ytdlpExecWithClientChains(`ytsearch${limit}:${q}`, [
-      "--dump-single-json",
-      "--flat-playlist",
-      "--no-warnings",
-    ]);
+    const result = await ytdlpExecWithClientChains(
+      `ytsearch${limit}:${q}`,
+      ["--dump-single-json", "--flat-playlist", "--no-warnings"],
+      { stopOnBotChallenge: true },
+    );
     if (!result.ok) {
       console.warn("[youtube] search error:", { query: q, ...result });
       const status = result.code === "bot_challenge" ? 503 : 502;
@@ -211,7 +216,7 @@ async function resolveStreamUrl(videoId) {
     "--no-warnings",
     "-f",
     "bestaudio/best",
-  ]);
+  ], { stopOnBotChallenge: true });
   if (result.ok) {
     const url = result.stdout.trim().split(/\r?\n/).find(Boolean) || null;
     if (url) return { ok: true, url };
