@@ -42,7 +42,7 @@ https://github.com/user-attachments/assets/32c52cb0-c302-4878-8b1b-299a5fada3b3
 
 One backend, two clients. The real-time sync logic is written once and consumed by both the web app and the CLI over the same Socket.io event contract.
 
-**No YouTube API key required — uses yt-dlp for metadata and stream extraction.:** The Node.js server runs `yt-dlp` with Node as a JS runtime to search YouTube and extract direct audio stream URLs — no YouTube API keys or Google quotas. The web client uses the YouTube IFrame player; the CLI uses `mpv` with stream URLs from the server (local yt-dlp fallback when needed).
+**No YouTube API key required — uses yt-dlp for metadata and stream extraction.:** The Node.js server runs `yt-dlp` with Node as a JS runtime to search YouTube and extract direct audio stream URLs — no YouTube API keys or Google quotas. The server also uses short-TTL stream URL caching and queue-time pre-resolution to reduce play latency. The web client uses the YouTube IFrame player; the CLI uses `mpv` and races server/local resolution paths with preload + cache.
 
 ```
 vaux/
@@ -177,7 +177,7 @@ A cross-client KDF pin test (`web/__tests__/crypto.test.ts` ↔ `cli/tests/test_
 
 - **Create:** First joiner sends `create: true`. Server stores the Argon2id hash of the auth proof.
 - **Last leave:** Room is deleted after a 5 s blip window (so reconnects don't burn it).
-- **Host quits:** Room is destroyed immediately. All other members are disconnected.
+- **Host quits/disconnects without transfer:** Room is destroyed immediately. All other members are disconnected.
 
 ### Invite URL
 

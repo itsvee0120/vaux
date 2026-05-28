@@ -27,6 +27,7 @@ Built with [Textual](https://textual.textualize.io/) and powered by `mpv`.
 - **Private rooms** — invite-only with end-to-end encrypted chat (XSalsa20-Poly1305, Argon2id key derivation). Room burns when the host leaves.
 - **Host controls** — play, pause, skip, remove tracks, transfer host
 - **No YouTube API key** — search and stream URLs come from the Vaux server (with local yt-dlp fallback)
+- **Faster track starts** — background stream preloading + cache-aware resolution paths
 
 ## Requirements
 
@@ -134,7 +135,21 @@ Type `/host <username>` in chat to transfer host to another listener.
 
 ## Streaming notes
 
-Audio is resolved via the server first, then local yt-dlp fallback. Override `VAUX_API_KEY` only if the server uses a custom `API_KEY`. If playback fails, update yt-dlp and keep Node.js on PATH:
+Audio stream URLs are resolved through a low-latency pipeline:
+
+- Server attempts yt-dlp extraction with client-chain fallbacks.
+- Server caches stream URLs for a short TTL and pre-resolves on `queue:add`.
+- CLI races server and local yt-dlp in parallel, then uses the first success.
+- CLI preloads upcoming tracks and keeps an in-memory per-session stream cache.
+
+During playback startup, the system log shows:
+
+- `⚡ stream source: cache (local)`
+- `⚡ stream source: cache (server)`
+- `⚡ stream source: server live`
+- `⚡ stream source: local yt-dlp`
+
+Override `VAUX_API_KEY` only if the server uses a custom `API_KEY`. If playback fails, update yt-dlp and keep Node.js on PATH:
 
 ```powershell
 pip install -U yt-dlp
