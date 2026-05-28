@@ -45,25 +45,61 @@ async def ping_server(server_url: str, timeout: float = 30.0) -> None:
         pass
 
 
-async def search_youtube(server_url: str, query: str) -> list[SearchResult]:
+def _format_api_error(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+        code = data.get("code")
+        msg = data.get("error") or resp.text or f"HTTP {resp.status_code}"
+        if code == "bot_challenge":
+            return (
+                "YouTube blocked server search (bot challenge). "
+                "Retry in a few seconds."
+            )
+        return str(msg)
+    except Exception:
+        return resp.text or f"HTTP {resp.status_code}"
+
+
+async def search_youtube(
+    server_url: str, query: str, *, retries: int = 3
+) -> list[SearchResult]:
     """Hits the server-side YouTube search proxy and returns results."""
     url = f"{server_url.rstrip('/')}/youtube/search"
     headers = _api_headers()
-    async with httpx.AsyncClient(headers=headers) as client:
-        resp = await client.get(url, params={"q": query}, timeout=10.0)
-        resp.raise_for_status()
-        data = resp.json()
+    last_error: Exception | None = None
 
-    return [
-        SearchResult(
-            video_id=r["videoId"],
-            title=r["title"],
-            channel=r["channel"],
-            thumbnail=r["thumbnail"],
-            duration=r.get("duration", 0.0) or 0.0,
-        )
-        for r in data.get("results", [])
-    ]
+    for attempt in range(retries):
+        timeout = 15.0 + attempt * 10.0
+        try:
+            async with httpx.AsyncClient(headers=headers) as client:
+                resp = await client.get(
+                    url, params={"q": query}, timeout=timeout
+                )
+                if resp.status_code >= 400:
+                    raise httpx.HTTPStatusError(
+                        _format_api_error(resp),
+                        request=resp.request,
+                        response=resp,
+                    )
+                data = resp.json()
+            return [
+                SearchResult(
+                    video_id=r["videoId"],
+                    title=r["title"],
+                    channel=r["channel"],
+                    thumbnail=r["thumbnail"],
+                    duration=r.get("duration", 0.0) or 0.0,
+                )
+                for r in data.get("results", [])
+            ]
+        except Exception as exc:
+            last_error = exc
+            if attempt < retries - 1:
+                await asyncio.sleep(0.75 * (attempt + 1))
+                continue
+            raise last_error from exc
+
+    raise RuntimeError("search failed")
 
 
 def _ytdlp_base_args() -> list[str]:
@@ -111,8 +147,11 @@ def _parse_ytdlp_error(stderr: str) -> str:
 
 async def _get_stream_from_server(
     server_url: str, video_id: str
-) -> tuple[str | None, str | None]:
-    """Ask the vaux server to resolve a stream URL via its bundled yt-dlp."""
+) -> tuple[str | None, str | None, str | None]:
+    """Ask the vaux server to resolve a stream URL via its bundled yt-dlp.
+
+    Returns (stream_url, error_message, error_code).
+    """
     url = f"{server_url.rstrip('/')}/youtube/stream"
     headers = _api_headers()
     try:
@@ -126,15 +165,22 @@ async def _get_stream_from_server(
                 data = resp.json()
                 stream_url = data.get("url", "").strip()
                 if stream_url:
-                    return stream_url, None
-                return None, "server returned empty stream URL"
+                    return stream_url, None, None
+                return None, "server returned empty stream URL", "unknown"
             try:
-                detail = resp.json().get("error", resp.text)
+                data = resp.json()
+                code = data.get("code")
+                detail = data.get("error") or resp.text
             except Exception:
+                code = None
                 detail = resp.text or f"HTTP {resp.status_code}"
-            return None, f"server: {detail}"
+            if code == "bot_challenge":
+                detail = (
+                    "YouTube blocked server stream extraction (bot challenge)"
+                )
+            return None, f"server: {detail}", code
     except Exception as exc:
-        return None, f"server unreachable: {exc}"
+        return None, f"server unreachable: {exc}", None
 
 
 async def _drain_subprocess(proc: asyncio.subprocess.Process) -> None:
@@ -207,8 +253,11 @@ async def get_stream_url(
     """Resolve a direct audio stream URL — server first, then local yt-dlp.
 
     Returns (stream_url, error_message). Only one of the two will be set.
+    On server bot_challenge, tries local yt-dlp immediately.
     """
-    stream_url, server_error = await _get_stream_from_server(server_url, video_id)
+    stream_url, server_error, server_code = await _get_stream_from_server(
+        server_url, video_id
+    )
     if stream_url:
         return stream_url, None
 
@@ -217,4 +266,6 @@ async def get_stream_url(
         return stream_url, None
 
     parts = [part for part in (server_error, local_error) if part]
+    if server_code == "bot_challenge" and not local_error:
+        parts.append("install or update local yt-dlp (pip install -U yt-dlp)")
     return None, " | ".join(parts) if parts else "could not resolve stream"
