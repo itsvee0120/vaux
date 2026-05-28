@@ -22,15 +22,64 @@ let ytdlp = new YTDlpWrap();
 // Order is "least-gated first" per yt-dlp community reports for cloud IPs;
 // rotate if YouTube's gating shifts. Cookies/PO-tokens are heavier escalations
 // (account-ban risk, secret rotation) deferred until this stops being enough.
-function ytdlpBaseArgs() {
+function ytdlpBaseArgs(playerClients = "tv,web_safari,mweb,default") {
   return [
     "--js-runtimes",
     "node",
     "--remote-components",
     "ejs:github",
     "--extractor-args",
-    "youtube:player_client=tv,web_safari,mweb,default",
+    `youtube:player_client=${playerClients}`,
   ];
+}
+
+// Alternate client chains for datacenter IPs (Render, etc.). Tried in order.
+const YTDLP_PLAYER_CLIENT_CHAINS = [
+  "tv,web_safari,mweb,default",
+  "android_vr,ios,web",
+  "tv_embedded,web_creator",
+];
+
+function classifyYtDlpError(message) {
+  const text = String(message || "");
+  if (
+    /sign in to confirm you.?re not a bot/i.test(text) ||
+    /confirm you.?re not a bot/i.test(text)
+  ) {
+    return {
+      code: "bot_challenge",
+      error:
+        "YouTube blocked extraction on the server (bot challenge). Try again or use CLI local yt-dlp.",
+    };
+  }
+  if (
+    /private video|members.only|age.restricted|unavailable|removed|not available/i.test(
+      text,
+    )
+  ) {
+    return {
+      code: "unavailable",
+      error: "Video unavailable or restricted on YouTube.",
+    };
+  }
+  return { code: "unknown", error: "could not resolve stream" };
+}
+
+async function ytdlpExecWithClientChains(watchUrl, extraArgs) {
+  let lastFailure = classifyYtDlpError("unknown");
+  for (const clients of YTDLP_PLAYER_CLIENT_CHAINS) {
+    try {
+      const stdout = await ytdlp.execPromise([
+        watchUrl,
+        ...ytdlpBaseArgs(clients),
+        ...extraArgs,
+      ]);
+      return { ok: true, stdout };
+    } catch (err) {
+      lastFailure = classifyYtDlpError(err.message || String(err));
+    }
+  }
+  return { ok: false, ...lastFailure };
 }
 
 const app = express();
@@ -117,15 +166,22 @@ app.get("/youtube/search", searchLimiter, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 20, 30);
 
   try {
-    const stdout = await ytdlp.execPromise([
-      `ytsearch${limit}:${q}`,
-      ...ytdlpBaseArgs(),
+    const result = await ytdlpExecWithClientChains(`ytsearch${limit}:${q}`, [
       "--dump-single-json",
       "--flat-playlist",
       "--no-warnings",
     ]);
+    if (!result.ok) {
+      console.warn("[youtube] search error:", { query: q, ...result });
+      const status = result.code === "bot_challenge" ? 503 : 502;
+      return res.status(status).json({
+        error: result.error,
+        code: result.code,
+        results: [],
+      });
+    }
 
-    const data = JSON.parse(stdout);
+    const data = JSON.parse(result.stdout);
     const entries = data.entries || [];
 
     const results = entries.map((item) => ({
@@ -144,32 +200,33 @@ app.get("/youtube/search", searchLimiter, async (req, res) => {
     res.json({ results });
   } catch (err) {
     console.error("[youtube] search error:", err);
-    res.status(500).json({ error: "internal server error" });
+    res.status(500).json({ error: "internal server error", code: "unknown" });
   }
 });
 
 async function resolveStreamUrl(videoId) {
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-  try {
-    const stdout = await ytdlp.execPromise([
-      watchUrl,
-      ...ytdlpBaseArgs(),
-      "--get-url",
-      "--no-warnings",
-      "-f",
-      "bestaudio/best",
-    ]);
-    return stdout.trim().split(/\r?\n/).find(Boolean) || null;
-  } catch (err) {
-    // Include videoId so the Render logs can distinguish per-video failures
-    // (region locks, age gates, deleted videos) from scattered bot-gate noise.
-    console.warn("[youtube] stream extraction failed:", {
-      videoId,
-      message: err.message || String(err),
-    });
-    return null;
+  const result = await ytdlpExecWithClientChains(watchUrl, [
+    "--get-url",
+    "--no-warnings",
+    "-f",
+    "bestaudio/best",
+  ]);
+  if (result.ok) {
+    const url = result.stdout.trim().split(/\r?\n/).find(Boolean) || null;
+    if (url) return { ok: true, url };
+    return {
+      ok: false,
+      code: "unknown",
+      error: "could not resolve stream",
+    };
   }
+  console.warn("[youtube] stream extraction failed:", {
+    videoId,
+    code: result.code,
+    error: result.error,
+  });
+  return result;
 }
 
 app.get("/youtube/stream", streamLimiter, async (req, res) => {
@@ -177,14 +234,18 @@ app.get("/youtube/stream", streamLimiter, async (req, res) => {
   if (!videoId) return res.status(400).json({ error: "videoId required" });
 
   try {
-    const url = await resolveStreamUrl(videoId);
-    if (!url) {
-      return res.status(500).json({ error: "could not resolve stream" });
+    const result = await resolveStreamUrl(videoId);
+    if (result.ok) {
+      return res.json({ url: result.url });
     }
-    res.json({ url });
+    const status = result.code === "bot_challenge" ? 503 : 502;
+    return res.status(status).json({
+      error: result.error,
+      code: result.code,
+    });
   } catch (err) {
     console.error("[youtube] stream error:", err);
-    res.status(500).json({ error: "internal server error" });
+    res.status(500).json({ error: "internal server error", code: "unknown" });
   }
 });
 

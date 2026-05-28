@@ -1419,6 +1419,7 @@ class VauxApp(App):
             await self.socket.join_room(self.room_id, self.username)
 
         self.set_interval(1.0, self._check_player_status)
+        asyncio.create_task(ping_server(self.server_url))
 
     async def on_unmount(self):
         if getattr(self, "player", None):
