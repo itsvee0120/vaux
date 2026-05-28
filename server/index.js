@@ -161,6 +161,34 @@ const streamLimiter = rateLimit({
   message: { error: "rate limit exceeded — slow down" },
 });
 
+// Stream URL cache. yt-dlp URLs expire, so keep TTL conservative.
+const STREAM_CACHE_TTL_MS = 20 * 60 * 1000;
+const STREAM_CACHE_MAX = 500;
+const streamUrlCache = new Map();
+const inFlightStreamResolutions = new Map();
+
+function getCachedStream(videoId) {
+  const entry = streamUrlCache.get(videoId);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    streamUrlCache.delete(videoId);
+    return null;
+  }
+  return entry.url;
+}
+
+function setCachedStream(videoId, url) {
+  if (streamUrlCache.has(videoId)) streamUrlCache.delete(videoId);
+  else if (streamUrlCache.size >= STREAM_CACHE_MAX) {
+    const oldest = streamUrlCache.keys().next().value;
+    if (oldest) streamUrlCache.delete(oldest);
+  }
+  streamUrlCache.set(videoId, {
+    url,
+    expiresAt: Date.now() + STREAM_CACHE_TTL_MS,
+  });
+}
+
 // ─────────────────────────────
 // YOUTUBE SEARCH
 // ─────────────────────────────
@@ -210,6 +238,10 @@ app.get("/youtube/search", searchLimiter, async (req, res) => {
 });
 
 async function resolveStreamUrl(videoId) {
+  const cached = getCachedStream(videoId);
+  if (cached) {
+    return { ok: true, url: cached, cached: true };
+  }
   const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const result = await ytdlpExecWithClientChains(watchUrl, [
     "--get-url",
@@ -219,7 +251,10 @@ async function resolveStreamUrl(videoId) {
   ], { stopOnBotChallenge: true });
   if (result.ok) {
     const url = result.stdout.trim().split(/\r?\n/).find(Boolean) || null;
-    if (url) return { ok: true, url };
+    if (url) {
+      setCachedStream(videoId, url);
+      return { ok: true, url, cached: false };
+    }
     return {
       ok: false,
       code: "unknown",
@@ -234,14 +269,28 @@ async function resolveStreamUrl(videoId) {
   return result;
 }
 
+function resolveStreamUrlInFlight(videoId) {
+  const cached = getCachedStream(videoId);
+  if (cached) {
+    return Promise.resolve({ ok: true, url: cached, cached: true });
+  }
+  const existing = inFlightStreamResolutions.get(videoId);
+  if (existing) return existing;
+  const task = resolveStreamUrl(videoId).finally(() => {
+    inFlightStreamResolutions.delete(videoId);
+  });
+  inFlightStreamResolutions.set(videoId, task);
+  return task;
+}
+
 app.get("/youtube/stream", streamLimiter, async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.status(400).json({ error: "videoId required" });
 
   try {
-    const result = await resolveStreamUrl(videoId);
+    const result = await resolveStreamUrlInFlight(videoId);
     if (result.ok) {
-      return res.json({ url: result.url });
+      return res.json({ url: result.url, cached: Boolean(result.cached) });
     }
     const status = result.code === "bot_challenge" ? 503 : 502;
     return res.status(status).json({
@@ -1004,6 +1053,8 @@ io.on("connection", (socket) => {
 
       room.queue.push(item);
       io.to(roomId).emit("queue:updated", { queue: room.queue });
+      // Resolve in the background so playback can start immediately later.
+      void resolveStreamUrlInFlight(item.videoId).catch(() => {});
     },
   );
 
