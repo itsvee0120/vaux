@@ -1330,6 +1330,7 @@ class VauxApp(App):
         # event so we don't issue spurious mpv seeks.
         self._last_applied_updated_at: float = 0.0
         self.stream_cache: dict[str, str] = {}
+        self._stream_preload_tasks: dict[str, asyncio.Task] = {}
         self.volume = 100
         self._volume_before_mute = 100
         self._chat_history: list[str] = []
@@ -1619,6 +1620,10 @@ class VauxApp(App):
             added_by = track.get("addedBy") or "?"
             self.notify(f"♪ {title} added by {added_by}", timeout=3)
         await self._refresh_queue()
+        if self.queue:
+            next_video_id = self.queue[0].get("videoId")
+            if isinstance(next_video_id, str):
+                self._preload_stream(next_video_id)
 
     async def _on_playback_state(self, data: dict):
         # Capture the previous track id BEFORE we overwrite playback so we
@@ -1756,6 +1761,24 @@ class VauxApp(App):
             self.player_running = False
             asyncio.create_task(self._trigger_ended())
 
+    def _preload_stream(self, video_id: str) -> None:
+        if not video_id or video_id in self.stream_cache:
+            return
+        if video_id in self._stream_preload_tasks:
+            return
+
+        async def _run() -> None:
+            try:
+                url, _, _ = await get_stream_url(self.server_url, video_id)
+                if url:
+                    self.stream_cache[video_id] = url
+            except Exception:
+                pass
+            finally:
+                self._stream_preload_tasks.pop(video_id, None)
+
+        self._stream_preload_tasks[video_id] = asyncio.create_task(_run())
+
     async def _apply_playback(self, *, announce: bool = True):
         """Syncs the python-mpv player instance with the server playback state.
 
@@ -1807,22 +1830,37 @@ class VauxApp(App):
 
             stream_url = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
+            stream_source: str | None = None
             if not stream_url:
                 # Stream resolution is the 5–10s gap that previously made the
                 # CLI feel unresponsive after a play/skip.
                 if announce:
                     self._post_system("⏳ loading stream…")
-                stream_url, stream_error = await get_stream_url(
+                stream_url, stream_error, stream_source = await get_stream_url(
                     self.server_url, s.video_id
                 )
                 if stream_url:
                     self.stream_cache[s.video_id] = stream_url
+            else:
+                stream_source = "memory-cache"
 
             if stream_url:
                 target_pos = s.synced_position()
                 self.player.play(stream_url, start=target_pos, volume=self.volume)
                 self.last_video_id = s.video_id
                 self.player_running = True
+                if announce:
+                    source_label = {
+                        "memory-cache": "cache (local)",
+                        "server-cache": "cache (server)",
+                        "server-live": "server live",
+                        "local-ytdlp": "local yt-dlp",
+                    }.get(stream_source or "", stream_source or "unknown")
+                    self._post_system(f"⚡ stream source: {source_label}")
+                if self.queue:
+                    next_video_id = self.queue[0].get("videoId")
+                    if isinstance(next_video_id, str):
+                        self._preload_stream(next_video_id)
                 if is_new_track and announce:
                     # `▶` icon already conveys "playing" — drop the verbose
                     # "now playing:" label so the title fits on one line.

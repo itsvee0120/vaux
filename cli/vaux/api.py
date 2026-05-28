@@ -147,10 +147,10 @@ def _parse_ytdlp_error(stderr: str) -> str:
 
 async def _get_stream_from_server(
     server_url: str, video_id: str
-) -> tuple[str | None, str | None, str | None]:
+) -> tuple[str | None, str | None, str | None, str | None]:
     """Ask the vaux server to resolve a stream URL via its bundled yt-dlp.
 
-    Returns (stream_url, error_message, error_code).
+    Returns (stream_url, error_message, error_code, source_label).
     """
     url = f"{server_url.rstrip('/')}/youtube/stream"
     headers = _api_headers()
@@ -167,8 +167,9 @@ async def _get_stream_from_server(
                 data = resp.json()
                 stream_url = data.get("url", "").strip()
                 if stream_url:
-                    return stream_url, None, None
-                return None, "server returned empty stream URL", "unknown"
+                    source = "server-cache" if data.get("cached") else "server-live"
+                    return stream_url, None, None, source
+                return None, "server returned empty stream URL", "unknown", None
             try:
                 data = resp.json()
                 code = data.get("code")
@@ -180,9 +181,9 @@ async def _get_stream_from_server(
                 detail = (
                     "YouTube blocked server stream extraction (bot challenge)"
                 )
-            return None, f"server: {detail}", code
+            return None, f"server: {detail}", code, None
     except Exception as exc:
-        return None, f"server unreachable: {exc}", None
+        return None, f"server unreachable: {exc}", None, None
 
 
 async def _drain_subprocess(proc: asyncio.subprocess.Process) -> None:
@@ -233,6 +234,9 @@ async def _get_stream_local(video_id: str) -> tuple[str | None, str | None]:
 
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+    except asyncio.CancelledError:
+        await _drain_subprocess(proc)
+        raise
     except asyncio.TimeoutError:
         await _drain_subprocess(proc)
         return None, "yt-dlp timed out"
@@ -251,23 +255,51 @@ async def _get_stream_local(video_id: str) -> tuple[str | None, str | None]:
 
 async def get_stream_url(
     server_url: str, video_id: str
-) -> tuple[str | None, str | None]:
-    """Resolve a direct audio stream URL — server first, then local yt-dlp.
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve a direct audio stream URL — race server and local yt-dlp.
 
-    Returns (stream_url, error_message). Only one of the two will be set.
-    On server bot_challenge, tries local yt-dlp immediately.
+    Returns (stream_url, error_message, source_label).
+    First successful resolver wins; pending task is cancelled.
     """
-    stream_url, server_error, server_code = await _get_stream_from_server(
-        server_url, video_id
-    )
-    if stream_url:
-        return stream_url, None
+    server_task = asyncio.create_task(_get_stream_from_server(server_url, video_id))
+    local_task = asyncio.create_task(_get_stream_local(video_id))
+    pending = {server_task, local_task}
+    server_error: str | None = None
+    server_code: str | None = None
+    local_error: str | None = None
 
-    stream_url, local_error = await _get_stream_local(video_id)
-    if stream_url:
-        return stream_url, None
+    try:
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in done:
+                if task is server_task:
+                    stream_url, err, code, source = task.result()
+                    if stream_url:
+                        for p in pending:
+                            p.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        return stream_url, None, source
+                    server_error, server_code = err, code
+                else:
+                    stream_url, err = task.result()
+                    if stream_url:
+                        for p in pending:
+                            p.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
+                        return stream_url, None, "local-ytdlp"
+                    local_error = err
+    except Exception as exc:
+        for task in (server_task, local_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(server_task, local_task, return_exceptions=True)
+        return None, str(exc), None
 
     parts = [part for part in (server_error, local_error) if part]
     if server_code == "bot_challenge" and not local_error:
         parts.append("install or update local yt-dlp (pip install -U yt-dlp)")
-    return None, " | ".join(parts) if parts else "could not resolve stream"
+    return None, " | ".join(parts) if parts else "could not resolve stream", None
