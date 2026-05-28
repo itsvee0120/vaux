@@ -464,6 +464,20 @@ function removeMemberFromRoom(socket, roomId) {
   room.members = room.members.filter((m) => m.userId !== userId);
 
   if (socket.connected) socket.leave(roomId);
+  // Private rooms are ephemeral by design: if host leaves without an explicit
+  // transfer, end the room instead of auto-promoting a new host.
+  if (wasHost && room.private) {
+    cancelCleanupTimer(room);
+    io.to(roomId).emit("room:ended", {
+      reason: "host_left_without_transfer",
+      roomId,
+    });
+    io.in(roomId).disconnectSockets(true);
+    delete rooms[roomId];
+    logPrivate("room destroyed by host disconnect");
+    return;
+  }
+
   socket.to(roomId).emit("room:member_left", { userId });
 
   if (wasHost && room.members.length > 0) {
