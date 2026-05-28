@@ -78,6 +78,8 @@ function loadYouTubeApi(): Promise<void> {
 type Props = {
   playback: PlaybackState;
   isHost: boolean;
+  /** When true, host play/pause events are not echoed (player hidden / bg tab). */
+  suppressHostPlaybackEcho?: boolean;
   onPlay: (positionSeconds: number) => void;
   onPause: (positionSeconds: number) => void;
   onEnded: () => void;
@@ -89,6 +91,7 @@ type Props = {
 export function YoutubePlayer({
   playback,
   isHost,
+  suppressHostPlaybackEcho = false,
   onPlay,
   onPause,
   onEnded,
@@ -101,6 +104,8 @@ export function YoutubePlayer({
   const lastAppliedAt = useRef(0);
   const lastVideoId = useRef<string | null>(null);
   const playbackRef = useRef(playback);
+  const tabHiddenRef = useRef(false);
+  const suppressEchoRef = useRef(suppressHostPlaybackEcho);
 
   const [localPlaying, setLocalPlaying] = useState(false);
   const [showBlockedOverlay, setShowBlockedOverlay] = useState(false);
@@ -121,6 +126,10 @@ export function YoutubePlayer({
     onPauseRef.current = onPause;
     onEndedRef.current = onEnded;
   }, [isHost, onPlay, onPause, onEnded]);
+
+  useEffect(() => {
+    suppressEchoRef.current = suppressHostPlaybackEcho;
+  }, [suppressHostPlaybackEcho]);
 
   // ── applyPlaybackRef ──
   // Stable ref to applyPlayback so buildPlayer can call it without a forward
@@ -178,6 +187,40 @@ export function YoutubePlayer({
   useEffect(() => {
     applyPlaybackRef.current = applyPlayback;
   }, [applyPlayback]);
+
+  // Browsers pause background-tab media; YouTube fires PAUSED which the host
+  // would otherwise echo to the server and pause everyone. Re-sync on return.
+  useEffect(() => {
+    const syncHostPlayerIfPlaying = () => {
+      if (!isHostRef.current || !readyRef.current) return;
+      const state = playbackRef.current;
+      if (!state.isPlaying || !state.videoId) return;
+      applyPlaybackRef.current(state);
+    };
+
+    const onVisibility = () => {
+      tabHiddenRef.current = document.hidden;
+      if (!document.hidden) syncHostPlayerIfPlaying();
+    };
+
+    tabHiddenRef.current = document.hidden;
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  // Mobile: player panel uses CSS hidden when another tab is active — same
+  // spurious PAUSED as a background browser tab.
+  useEffect(() => {
+    const wasSuppressed = suppressEchoRef.current;
+    suppressEchoRef.current = suppressHostPlaybackEcho;
+    if (wasSuppressed && !suppressHostPlaybackEcho) {
+      if (!isHostRef.current || !readyRef.current) return;
+      const state = playbackRef.current;
+      if (state.isPlaying && state.videoId) {
+        applyPlaybackRef.current(state);
+      }
+    }
+  }, [suppressHostPlaybackEcho]);
 
   // ── buildPlayer ──
   // Constructs a fresh YT.Player into wrapperRef. Called on mount and again on
@@ -255,10 +298,15 @@ export function YoutubePlayer({
             // Host: echo state changes back to the server.
             if (applyingRemote.current || !playerRef.current) return;
             const t = playerRef.current.getCurrentTime();
-            if (event.data === YT.PlayerState.PLAYING) onPlayRef.current(t);
-            else if (event.data === YT.PlayerState.PAUSED)
-              onPauseRef.current(t);
-            else if (event.data === YT.PlayerState.ENDED) onEndedRef.current();
+            const suppressEcho =
+              tabHiddenRef.current || suppressEchoRef.current;
+            if (event.data === YT.PlayerState.PLAYING) {
+              if (!suppressEcho) onPlayRef.current(t);
+            } else if (event.data === YT.PlayerState.PAUSED) {
+              if (!suppressEcho) onPauseRef.current(t);
+            } else if (event.data === YT.PlayerState.ENDED) {
+              onEndedRef.current();
+            }
           },
         },
       });
