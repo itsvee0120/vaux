@@ -1162,7 +1162,7 @@ export function LobbyPage({
                 state, scroll positions, chat input draft, and chatEndRef all
                 survive tab switches without remounting. */}
             <div
-              className={`flex min-h-0 flex-1 flex-col p-4 pt-15 ${
+              className={`flex min-h-0 flex-1 flex-col p-4 ${
                 activeTab === "player" ? "" : "hidden"
               }`}
             >
