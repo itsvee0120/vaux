@@ -102,6 +102,12 @@ export default function Home() {
   const [roomId, setRoomId] = useState("");
   const [username, setUsername] = useState("");
   const [rejoinFailed, setRejoinFailed] = useState(false);
+  /** True only while the mount-time session-restore effect is actively
+   *  trying to reconnect a *previous* session — never for a fresh,
+   *  user-initiated join. Gates the full-screen "Rejoining room…" overlay. */
+  const [autoRejoining, setAutoRejoining] = useState(false);
+  /** True while a user-initiated join (from the login form) is in flight. */
+  const [joining, setJoining] = useState(false);
   const [members, setMembers] = useState<
     { userId: string; username: string; role: string }[]
   >([]);
@@ -119,6 +125,13 @@ export default function Home() {
 
   const [isPrivate, setIsPrivate] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+  /** Render-safe mirrors of myUserIdRef / privateRef.current.password —
+   *  reading a ref's `.current` during render throws (React refs rule), so
+   *  these are updated alongside every ref write and used in JSX instead. */
+  const [displayUserId, setDisplayUserId] = useState("");
+  const [displayPrivatePassword, setDisplayPrivatePassword] = useState<
+    string | null
+  >(null);
   /**
    * Active private-room key material. Refs (not state) so encrypt/decrypt
    * helpers see the latest values without re-binding to socket handlers.
@@ -133,7 +146,7 @@ export default function Home() {
   const disconnectWarnedRef = useRef(false);
 
   const restoring =
-    hydrated && session !== null && screen === "lobby" && !rejoinFailed;
+    hydrated && autoRejoining && screen === "lobby" && !rejoinFailed;
 
   // URL fragment parsing now lives in LoginPage's lazy state initializers
   // so an opened invite link pre-fills before the user sees anything.
@@ -180,6 +193,7 @@ export default function Home() {
       } = payload;
       const isPriv = payload.private === true;
       myUserIdRef.current = userId ?? "";
+      setDisplayUserId(userId ?? "");
       const stored = loadSession();
       if (stored) {
         setRoomId(stored.roomId);
@@ -191,6 +205,8 @@ export default function Home() {
       setIsPrivate(isPriv);
       roomEndedRef.current = false;
       disconnectWarnedRef.current = false;
+      setAutoRejoining(false);
+      setJoining(false);
 
       if (isPriv) {
         // Decrypt every member's name before showing the room. Any member
@@ -341,8 +357,10 @@ export default function Home() {
           if (socket.connected) socket.disconnect();
           clearSession();
           privateRef.current = null;
+          setDisplayPrivatePassword(null);
           memberNamesRef.current = new Map();
           myUserIdRef.current = "";
+          setDisplayUserId("");
           setScreen("lobby");
           setRoomId("");
           setIsPrivate(false);
@@ -433,9 +451,12 @@ export default function Home() {
       ({ reason, retryAfterMs }: { reason: string; retryAfterMs?: number }) => {
         clearSession();
         privateRef.current = null;
+        setDisplayPrivatePassword(null);
         memberNamesRef.current = new Map();
         setIsPrivate(false);
         setRejoinFailed(true);
+        setAutoRejoining(false);
+        setJoining(false);
         setScreen("lobby");
         if (reason === "auth_failed") {
           setJoinError(
@@ -476,6 +497,8 @@ export default function Home() {
       return;
     }
 
+    setAutoRejoining(true);
+
     if (session.privateMaterial) {
       // Private rooms reload from sessionStorage by re-encrypting our own
       // username (we still have chatKey) and re-emitting room:join. The
@@ -493,6 +516,7 @@ export default function Home() {
           password: null,
           ownNameCipher,
         };
+        setDisplayPrivatePassword(null);
         setIsPrivate(true);
         joinSocketPrivate(session.roomId, authProof, ownNameCipher, false);
       })();
@@ -500,7 +524,10 @@ export default function Home() {
       joinSocketPublic(session.roomId, session.username);
     }
 
-    const timeout = setTimeout(() => setRejoinFailed(true), 12_000);
+    const timeout = setTimeout(() => {
+      setRejoinFailed(true);
+      setAutoRejoining(false);
+    }, 12_000);
     return () => clearTimeout(timeout);
   }, [session, screen, rejoinFailed]);
 
@@ -568,7 +595,9 @@ export default function Home() {
     setRejoinFailed(false);
     setJoinError(null);
     setIsPrivate(false);
+    setJoining(true);
     privateRef.current = null;
+    setDisplayPrivatePassword(null);
     skipSessionRejoinRef.current = true;
     saveSession(rid, user);
     joinSocketPublic(rid, user);
@@ -590,6 +619,7 @@ export default function Home() {
     setJoinError(null);
     setRejoinFailed(false);
     setIsPrivate(true);
+    setJoining(true);
 
     // Argon2id derivation. Spec budget is ~250 ms; keep the user informed
     // by showing "Rejoining room…" overlay via the existing `restoring`
@@ -604,6 +634,7 @@ export default function Home() {
         password,
         ownNameCipher,
       };
+      setDisplayPrivatePassword(password);
       const persisted: PrivateSessionMaterial = {
         authProofB64: bytesToB64(material.authProof),
         chatKeyB64: bytesToB64(material.chatKey),
@@ -616,7 +647,9 @@ export default function Home() {
       console.warn("[vaux] private join derivation failed:", err);
       setJoinError("Could not derive room key. Check the invite and try again.");
       setIsPrivate(false);
+      setJoining(false);
       privateRef.current = null;
+      setDisplayPrivatePassword(null);
     }
   }
 
@@ -693,11 +726,15 @@ export default function Home() {
     clearSession();
     if (socket.connected) socket.disconnect();
     myUserIdRef.current = "";
+    setDisplayUserId("");
     privateRef.current = null;
+    setDisplayPrivatePassword(null);
     memberNamesRef.current = new Map();
     setScreen("lobby");
     setRoomId("");
     setRejoinFailed(false);
+    setAutoRejoining(false);
+    setJoining(false);
     setJoinError(null);
     setIsPrivate(false);
     setQueue([]);
@@ -730,6 +767,7 @@ export default function Home() {
         onJoin={joinRoom}
         onJoinPrivate={joinPrivateRoom}
         joinError={joinError}
+        joining={joining}
       />
     );
   }
@@ -738,13 +776,13 @@ export default function Home() {
     <LobbyPage
       roomId={roomId}
       username={username}
-      userId={myUserIdRef.current}
+      userId={displayUserId}
       members={members}
       onTransferHost={transferHost}
       onLeave={leaveRoom}
       isHost={isHost}
       isPrivate={isPrivate}
-      privatePassword={privateRef.current?.password ?? null}
+      privatePassword={displayPrivatePassword}
       queue={queue}
       messages={messages}
       playback={playback}

@@ -2,10 +2,11 @@
 
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { LoginBackground } from "@/components/LoginBackground";
+import { WhatsVaux } from "@/components/WhatsVaux";
 import { generateRoomSlug } from "@/lib/room-slug";
 import { generatePassword } from "@/lib/crypto";
 import { BUG_REPORT_URL } from "@/lib/links";
-import { Bug, Lock } from "lucide-react";
+import { Bug, ClipboardCopy, ClipboardPaste, Lock } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -21,6 +22,8 @@ type LoginPageProps = {
   onJoinPrivate: (args: { password: string; create: boolean }) => void;
   /** Optional inline error from a prior failed join attempt. */
   joinError?: string | null;
+  /** True while a submitted join is waiting on the server. */
+  joining?: boolean;
 };
 
 const PRIVATE_PASSWORD_RE = /^[A-Za-z0-9_-]{22}$/;
@@ -53,6 +56,7 @@ export function LoginPage({
   onJoin,
   onJoinPrivate,
   joinError,
+  joining = false,
 }: LoginPageProps) {
   const [mode, setMode] = useState<"create" | "join" | "private">(() =>
     readFragmentPassword() ? "private" : "create",
@@ -212,6 +216,8 @@ export function LoginPage({
     <main className="relative isolate grid min-h-dvh w-full min-w-0 grid-rows-[1fr_auto] overflow-x-hidden bg-vaux-bg-dark font-mono text-white box-border">
       <LoginBackground />
 
+      <WhatsVaux />
+
       {BUG_REPORT_URL && (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -298,7 +304,14 @@ export function LoginPage({
                       }`}
                       aria-label="Copy room name"
                     >
-                      {copied ? "✓ copied" : "📋copy"}
+                      {copied ? (
+                        "✓ copied"
+                      ) : (
+                        <span className="inline-flex items-center gap-1">
+                          <ClipboardCopy className="size-3" aria-hidden />
+                          copy
+                        </span>
+                      )}
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="top">
@@ -346,7 +359,14 @@ export function LoginPage({
                         }`}
                         aria-label="Paste room name from clipboard"
                       >
-                        {pasted ? "✓ pasted" : "📋paste"}
+                        {pasted ? (
+                          "✓ pasted"
+                        ) : (
+                          <span className="inline-flex items-center gap-1">
+                            <ClipboardPaste className="size-3" aria-hidden />
+                            paste
+                          </span>
+                        )}
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top">
@@ -365,9 +385,10 @@ export function LoginPage({
                       setPrivateSubMode("paste");
                       onRoomIdChange("");
                     }}
-                    className="cursor-pointer rounded-xl border border-vaux-green-dark bg-vaux-bg/60 px-3 py-2 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-xl border border-vaux-green-dark bg-vaux-bg/60 px-3 py-2 text-xs text-vaux-green transition-colors hover:border-vaux-green hover:bg-vaux-green-dark/30 hover:text-vaux-light"
                   >
-                    🔒 That looks like a private invite. Use it →
+                    <Lock className="size-3 shrink-0" aria-hidden />
+                    That looks like a private invite. Use it →
                   </button>
                 )}
               </>
@@ -420,7 +441,14 @@ export function LoginPage({
                           }`}
                           aria-label="Copy invite link"
                         >
-                          {inviteCopied ? "✓ copied" : "📋copy"}
+                          {inviteCopied ? (
+                            "✓ copied"
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <ClipboardCopy className="size-3" aria-hidden />
+                              copy
+                            </span>
+                          )}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent side="top">
@@ -466,7 +494,14 @@ export function LoginPage({
                           }`}
                           aria-label="Paste from clipboard"
                         >
-                          {privatePasted2 ? "✓ pasted" : "📋paste"}
+                          {privatePasted2 ? (
+                            "✓ pasted"
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <ClipboardPaste className="size-3" aria-hidden />
+                              paste
+                            </span>
+                          )}
                         </button>
                       </TooltipTrigger>
                       <TooltipContent side="top">
@@ -495,15 +530,25 @@ export function LoginPage({
 
             <button
               type="submit"
-              disabled={mode === "private" && !privateInputValid}
-              className="w-full cursor-pointer rounded-2xl bg-vaux-green-dark px-4 py-3 text-sm font-bold transition-all hover:bg-vaux-green active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:py-2.5"
+              disabled={joining || (mode === "private" && !privateInputValid)}
+              className="w-full cursor-pointer rounded-2xl bg-vaux-green-dark px-4 py-3 text-sm font-bold transition hover:brightness-75 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 sm:py-2.5"
             >
-              {mode === "create" && "create & join \u2192"}
-              {mode === "join" && "join room \u2192"}
-              {mode === "private" &&
-                (privateSubMode === "create"
-                  ? "🔒 create private room \u2192"
-                  : "🔒 join private room \u2192")}
+              {joining && "joining\u2026"}
+              {!joining && mode === "create" && "create & join \u2192"}
+              {!joining && mode === "join" && "join room \u2192"}
+              {!joining &&
+                mode === "private" &&
+                (privateSubMode === "create" ? (
+                  <span className="inline-flex items-center justify-center gap-1.5">
+                    <Lock className="size-3.5" aria-hidden />
+                    create private room →
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center justify-center gap-1.5">
+                    <Lock className="size-3.5" aria-hidden />
+                    join private room →
+                  </span>
+                ))}
             </button>
           </form>
 
@@ -518,9 +563,12 @@ export function LoginPage({
             </p>
           )}
           {mode === "private" && privateSubMode === "create" && (
-            <p className="text-center text-xs text-zinc-600">
-              🔒 chat is end-to-end encrypted. Share this invite only with
-              people you trust — anyone with the link can join.
+            <p className="flex items-start justify-center gap-1.5 text-center text-xs text-zinc-600">
+              <Lock className="mt-0.5 size-3 shrink-0" aria-hidden />
+              <span>
+                chat is end-to-end encrypted. Share this invite only with
+                people you trust — anyone with the link can join.
+              </span>
             </p>
           )}
           {mode === "private" && privateSubMode === "paste" && (
