@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import { type PlaybackState, getSyncedPosition } from "@/lib/playback";
+import {
+  type AspectRatioId,
+  getAspectRatioPreset,
+} from "@/lib/player-ratio-storage";
 
 type YTPlayer = {
   loadVideoById: (videoId: string, startSeconds?: number) => void;
@@ -80,6 +84,7 @@ type Props = {
   isHost: boolean;
   /** When true, host play/pause events are not echoed (player hidden / bg tab). */
   suppressHostPlaybackEcho?: boolean;
+  aspectRatio: AspectRatioId;
   onPlay: (positionSeconds: number) => void;
   onPause: (positionSeconds: number) => void;
   onEnded: () => void;
@@ -92,6 +97,7 @@ export function YoutubePlayer({
   playback,
   isHost,
   suppressHostPlaybackEcho = false,
+  aspectRatio,
   onPlay,
   onPause,
   onEnded,
@@ -244,7 +250,7 @@ export function YoutubePlayer({
       wrapperRef.current.appendChild(targetEl);
 
       playerRef.current = new window.YT.Player(targetEl, {
-        height: "300",
+        height: "100%",
         width: "100%",
         playerVars: {
           autoplay: 0, // Never rely on playerVars autoplay — use loadVideoById instead
@@ -395,11 +401,29 @@ export function YoutubePlayer({
   // (so they can click the button), otherwise keep the iframe locked.
   const lockPointer = !isHost && !showBlockedOverlay;
 
+  // The container just centers whatever box the iframe settles on; the
+  // iframe itself is the CSS-authoritative sizing surface. Giving a replaced
+  // element (the iframe YT drops into wrapperRef) an `aspect-ratio` plus
+  // `width/height: auto` and `max-width/max-height: 100%` makes it size
+  // itself as large as possible while fitting BOTH axes of its container and
+  // preserving the ratio — the same mechanism that makes `<img
+  // style="max-width/height:100%">` responsive, no JS measuring needed. This
+  // also means the frame always fits its panel, however that panel was
+  // resized (drag or preset), so it can never push a sibling off-screen.
+  const preset = getAspectRatioPreset(aspectRatio);
+
   return (
-    <div className="relative w-full">
+    <div className="relative h-full min-h-0 w-full overflow-hidden bg-black">
+      {/* wrapperRef must have a *definite* box (via absolute+inset-0 against
+          this positioned, definitely-sized parent) before percentage
+          max-height/max-width on its iframe child can resolve at all — an
+          auto-height wrapper would make them no-ops per the CSS spec. */}
       <div
         ref={wrapperRef}
-        className={lockPointer ? "pointer-events-none" : undefined}
+        style={{ "--vaux-ratio": preset.css } as React.CSSProperties}
+        className={`absolute inset-0 flex items-center justify-center [&>iframe]:aspect-[var(--vaux-ratio)] [&>iframe]:h-auto [&>iframe]:w-auto [&>iframe]:max-h-full [&>iframe]:max-w-full ${
+          lockPointer ? "pointer-events-none" : ""
+        }`}
       />
       {showBlockedOverlay && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/70 backdrop-blur-sm">

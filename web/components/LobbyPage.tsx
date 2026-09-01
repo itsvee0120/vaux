@@ -9,6 +9,11 @@ import type { Track, Message, SearchResult } from "@/lib/room-types";
 import { YoutubePlayer } from "@/components/YoutubePlayer";
 import Image from "next/image";
 import {
+  Panel,
+  PanelGroup,
+  PanelResizeHandle,
+} from "react-resizable-panels";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuTrigger,
@@ -36,6 +41,7 @@ import {
   MessageSquare,
   Lock,
   Share2,
+  Ratio,
 } from "lucide-react";
 
 type Tab = "player" | "search" | "queue" | "chat";
@@ -43,6 +49,35 @@ import { BUG_REPORT_URL } from "@/lib/links";
 import { HelpModal } from "@/components/HelpModal";
 import { MobileTabBar, type MobileTab } from "@/components/MobileTabBar";
 import { hasSeenHelp, markHelpSeen } from "@/lib/help-storage";
+import {
+  ASPECT_RATIO_PRESETS,
+  setPlayerAspectRatio,
+  setRatioMenuCollapsed,
+  useStoredPlayerAspectRatio,
+  useStoredRatioMenuCollapsed,
+  type AspectRatioId,
+} from "@/lib/player-ratio-storage";
+
+// Thin, draggable divider between resizable panels — a hairline that grows
+// into a visible grip on hover/drag so it doesn't clutter the UI at rest.
+function ResizeHandle({ direction }: { direction: "horizontal" | "vertical" }) {
+  const isRow = direction === "horizontal";
+  return (
+    <PanelResizeHandle
+      className={`group relative shrink-0 bg-vaux-green/20 outline-none transition-colors hover:bg-vaux-green-dark data-[resize-handle-active]:bg-vaux-green ${
+        isRow ? "w-1 cursor-col-resize" : "h-1 cursor-row-resize"
+      }`}
+    >
+      <div
+        className={`pointer-events-none absolute rounded-full bg-vaux-green-dark opacity-0 transition-opacity group-hover:opacity-100 group-data-[resize-handle-active]:opacity-100 ${
+          isRow
+            ? "left-1/2 top-1/2 h-10 w-1 -translate-x-1/2 -translate-y-1/2"
+            : "left-1/2 top-1/2 h-1 w-10 -translate-x-1/2 -translate-y-1/2"
+        }`}
+      />
+    </PanelResizeHandle>
+  );
+}
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -141,6 +176,33 @@ export function LobbyPage({
   const [copiedRoom, setCopiedRoom] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("player");
+  // Per-viewer video-frame shape. storedRatio is hydration-safe (SSR/first
+  // client render both see the default); overrideRatio takes over the
+  // instant the user picks a preset this session, without waiting on a
+  // storage round-trip.
+  const storedRatio = useStoredPlayerAspectRatio();
+  const [overrideRatio, setOverrideRatio] = useState<AspectRatioId | null>(
+    null,
+  );
+  const playerRatio = overrideRatio ?? storedRatio;
+  const handleRatioChange = useCallback((id: AspectRatioId) => {
+    setOverrideRatio(id);
+    setPlayerAspectRatio(id);
+  }, []);
+  // The preset row is tucked behind a disclosure toggle so it doesn't eat
+  // vertical space once someone's picked a shape and moved on.
+  const storedRatioMenuCollapsed = useStoredRatioMenuCollapsed();
+  const [ratioMenuOverride, setRatioMenuOverride] = useState<boolean | null>(
+    null,
+  );
+  const ratioMenuCollapsed = ratioMenuOverride ?? storedRatioMenuCollapsed;
+  const toggleRatioMenu = useCallback(() => {
+    setRatioMenuOverride((prev) => {
+      const next = !(prev ?? storedRatioMenuCollapsed);
+      setRatioMenuCollapsed(next);
+      return next;
+    });
+  }, [storedRatioMenuCollapsed]);
   // Resolve a queue item's display name. Public rooms have plaintext
   // `addedBy`. Private rooms omit it (server doesn't know plaintext
   // usernames) and clients map `addedById` against the locally-decrypted
@@ -486,22 +548,64 @@ export function LobbyPage({
   // would create competing players, which is why we render one layout at a
   // time (see isDesktop above) instead of using Tailwind hidden/lg:flex.
   const playerPanel = (
-    <div className="overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-vaux-green-dark bg-zinc-900">
       {playback.videoId ? (
         <>
-          <YoutubePlayer
-            playback={playback}
-            isHost={isHost}
-            suppressHostPlaybackEcho={!isDesktop && activeTab !== "player"}
-            onPlay={onPlay}
-            onPause={onPause}
-            onEnded={onEnded}
-          />
-          <div className="border-t border-vaux-green-dark px-4 py-3">
+          <div className="min-h-0 flex-1">
+            <YoutubePlayer
+              playback={playback}
+              isHost={isHost}
+              suppressHostPlaybackEcho={!isDesktop && activeTab !== "player"}
+              aspectRatio={playerRatio}
+              onPlay={onPlay}
+              onPause={onPause}
+              onEnded={onEnded}
+            />
+          </div>
+          <div className="shrink-0 overflow-y-auto border-t border-vaux-green-dark px-4 py-3">
             <p className="truncate text-sm font-bold text-vaux-light">
               {decodeHTML(nowPlaying!.title)}
             </p>
             <p className="text-xs text-vaux-green">{nowPlaying!.channel}</p>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={toggleRatioMenu}
+                aria-expanded={!ratioMenuCollapsed}
+                className="flex cursor-pointer items-center gap-1.5 text-[11px] uppercase tracking-widest text-zinc-500 transition-colors hover:text-zinc-300"
+              >
+                <Ratio size={12} />
+                frame shape
+                <ChevronDownIcon
+                  className={`size-3 transition-transform ${
+                    ratioMenuCollapsed ? "" : "rotate-180"
+                  }`}
+                />
+              </button>
+              {!ratioMenuCollapsed && (
+                <div
+                  role="group"
+                  aria-label="Video frame aspect ratio"
+                  className="mt-2 flex gap-1 rounded-xl border border-vaux-green-dark p-1"
+                >
+                  {ASPECT_RATIO_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleRatioChange(preset.id)}
+                      aria-pressed={playerRatio === preset.id}
+                      className={`flex-1 cursor-pointer rounded-lg py-1.5 text-[11px] font-bold transition-all ${
+                        playerRatio === preset.id
+                          ? "bg-vaux-green-dark text-white"
+                          : "text-zinc-500 hover:text-zinc-300"
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="mt-3 flex flex-wrap items-center gap-3">
               {isHost && (
                 <>
@@ -1010,23 +1114,47 @@ export function LobbyPage({
         </Tooltip>
       </div>
 
-      {/* Layout switch: desktop keeps the original two-column shell (player +
-          search on the left, queue + chat stacked on the right). Mobile gets
-          a single-panel view with a bottom tab bar so each section has the
+      {/* Layout switch: desktop gets a fully drag-resizable shell (player +
+          search on the left, queue + chat stacked on the right; each split
+          is a real divider so no block can push another off-screen — every
+          panel has a minSize and scrolls internally instead). Mobile gets a
+          single-panel view with a bottom tab bar so each section has the
           full viewport instead of fighting for a few hundred pixels. */}
       {isDesktop ? (
-        <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 p-4">
-            {playerPanel}
-            {searchPanel}
-          </div>
-          <div className="flex min-h-0 w-80 shrink-0 flex-col border-l border-vaux-green">
-            {queuePanel}
-            <div className="flex h-60 shrink-0 flex-col border-t border-vaux-green-dark">
-              {chatPanel}
-            </div>
-          </div>
-        </div>
+        <PanelGroup direction="horizontal" autoSaveId="vaux:layout:h" className="min-h-0 flex-1">
+          <Panel defaultSize={72} minSize={45} className="flex min-h-0 flex-col">
+            <PanelGroup direction="vertical" autoSaveId="vaux:layout:left-v">
+              <Panel defaultSize={65} minSize={20} className="min-h-0">
+                <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4 pb-2">
+                  {playerPanel}
+                </div>
+              </Panel>
+              <ResizeHandle direction="vertical" />
+              <Panel defaultSize={35} minSize={15} className="min-h-0">
+                <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4 pt-2">
+                  {searchPanel}
+                </div>
+              </Panel>
+            </PanelGroup>
+          </Panel>
+          <ResizeHandle direction="horizontal" />
+          <Panel
+            defaultSize={28}
+            minSize={18}
+            maxSize={45}
+            className="flex min-h-0 flex-col border-l border-vaux-green"
+          >
+            <PanelGroup direction="vertical" autoSaveId="vaux:layout:right-v">
+              <Panel defaultSize={60} minSize={20} className="flex min-h-0 flex-col">
+                {queuePanel}
+              </Panel>
+              <ResizeHandle direction="vertical" />
+              <Panel defaultSize={40} minSize={15} className="flex min-h-0 flex-col border-t border-vaux-green-dark">
+                {chatPanel}
+              </Panel>
+            </PanelGroup>
+          </Panel>
+        </PanelGroup>
       ) : (
         <>
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
