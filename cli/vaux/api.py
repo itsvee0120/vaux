@@ -4,7 +4,9 @@ Currently covers YouTube search; extend as new endpoints are added.
 """
 
 import httpx
+import json
 import os
+import re
 import sys
 import shutil
 import asyncio
@@ -102,9 +104,28 @@ async def search_youtube(
     raise RuntimeError("search failed")
 
 
-def _ytdlp_base_args() -> list[str]:
+# "web" first (server/index.js's chain leads with "tv,web_safari,mweb,default"
+# instead): kept from debugging a since-fixed yt-dlp bug where "default"
+# resolved to the "android_vr" client, whose URLs 403'd in mpv regardless of
+# headers (fixed by upgrading yt-dlp — see _get_stream_local's docstring).
+# "web" first is still a reasonable, low-bot-wall-risk default for a
+# residential IP; the rest of the chain remains as a fallback.
+YTDLP_PLAYER_CLIENT_CHAINS = [
+    "web",
+    "tv,web_safari,mweb,default",
+    "web_embedded,tv_embedded",
+    "mweb",
+]
+
+
+def _ytdlp_base_args(player_clients: str) -> list[str]:
     """Flags required for modern YouTube extraction (JS challenges + EJS)."""
-    args = ["--remote-components", "ejs:github"]
+    args = [
+        "--remote-components",
+        "ejs:github",
+        "--extractor-args",
+        f"youtube:player_client={player_clients}",
+    ]
     if _NODE_PATH:
         args.extend(["--js-runtimes", "node"])
     return args
@@ -143,6 +164,27 @@ def _parse_ytdlp_error(stderr: str) -> str:
     if cleaned:
         return cleaned.splitlines()[-1]
     return "unknown yt-dlp error"
+
+
+def _classify_ytdlp_error(stderr: str) -> tuple[str, str]:
+    """Classify local yt-dlp stderr into (code, message).
+
+    Mirrors server/index.js's classifyYtDlpError so local and server failures
+    get the same treatment; bot-challenge here means the pip-installed yt-dlp
+    is stale, so the fix is an upgrade rather than a server retry.
+    """
+    if re.search(r"confirm you.?re not a bot", stderr, re.IGNORECASE):
+        return "bot_challenge", (
+            "YouTube blocked local extraction (bot challenge). "
+            "Try: pip install -U yt-dlp"
+        )
+    if re.search(
+        r"private video|members.only|age.restricted|unavailable|removed|not available",
+        stderr,
+        re.IGNORECASE,
+    ):
+        return "unavailable", "Video unavailable or restricted on YouTube."
+    return "unknown", _parse_ytdlp_error(stderr)
 
 
 async def _get_stream_from_server(
@@ -210,96 +252,122 @@ async def _drain_subprocess(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-async def _get_stream_local(video_id: str) -> tuple[str | None, str | None]:
-    """Fallback: resolve stream URL with local yt-dlp."""
+async def _get_stream_local(
+    video_id: str,
+) -> tuple[str | None, dict[str, str] | None, str | None]:
+    """Resolve stream URL with local yt-dlp (user IP — reliable vs datacenter).
+
+    Retries YTDLP_PLAYER_CLIENT_CHAINS the same way server/index.js's
+    ytdlpExecWithClientChains does: keep trying the next client set on any
+    non-bot-challenge failure, but stop immediately on a bot-challenge
+    classification (matches the server's stopOnBotChallenge=true behavior).
+    Infra-level failures (binary missing, timeout, subprocess error) return
+    immediately without looping, since a different client won't fix those.
+
+    Returns (stream_url, headers, error_message). Player clients sign the
+    returned URL to only accept requests carrying the same User-Agent and
+    other request headers (Accept, Accept-Language, Sec-Fetch-Mode, etc.)
+    yt-dlp used to resolve it — opening it with mpv's defaults instead gets
+    a 403 from the CDN. headers must be forwarded to the player when
+    present.
+
+    Note: an earlier version of this function rejected any resolution that
+    didn't come from the "web" client, because on a since-fixed yt-dlp bug
+    (yt-dlp defaulted to the "android_vr" client, whose URLs 403'd in mpv
+    regardless of headers) that was the only client that reliably worked.
+    Upgrading yt-dlp (2026.08.19+, which dropped android_vr from its
+    defaults) fixed the underlying issue — any client's resolution now
+    plays correctly once its headers are forwarded, so that rejection was
+    removed.
+    """
     ytdlp = _get_ytdlp_exe()
     watch_url = f"https://www.youtube.com/watch?v={video_id}"
+    last_error = "unknown yt-dlp error"
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            ytdlp,
-            *_ytdlp_base_args(),
-            "--get-url",
-            "--no-warnings",
-            "-f",
-            "bestaudio/best",
-            watch_url,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-    except FileNotFoundError:
-        return None, f"yt-dlp not found at {ytdlp}"
-    except Exception as exc:
-        return None, str(exc)
+    for player_clients in YTDLP_PLAYER_CLIENT_CHAINS:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ytdlp,
+                *_ytdlp_base_args(player_clients),
+                "--print",
+                "urls",
+                "--print",
+                "%(http_headers)j",
+                "--no-warnings",
+                "-f",
+                "bestaudio/best",
+                watch_url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            return None, None, f"yt-dlp not found at {ytdlp}"
+        except Exception as exc:
+            return None, None, str(exc)
 
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
-    except asyncio.CancelledError:
-        await _drain_subprocess(proc)
-        raise
-    except asyncio.TimeoutError:
-        await _drain_subprocess(proc)
-        return None, "yt-dlp timed out"
-    except Exception as exc:
-        await _drain_subprocess(proc)
-        return None, str(exc)
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45)
+        except asyncio.CancelledError:
+            await _drain_subprocess(proc)
+            raise
+        except asyncio.TimeoutError:
+            await _drain_subprocess(proc)
+            return None, None, "yt-dlp timed out"
+        except Exception as exc:
+            await _drain_subprocess(proc)
+            return None, None, str(exc)
 
-    if proc.returncode != 0:
+        if proc.returncode == 0:
+            out_lines = stdout.decode("utf-8", errors="ignore").strip().splitlines()
+            if out_lines and out_lines[0].startswith("http"):
+                url = out_lines[0]
+                headers: dict[str, str] | None = None
+                if len(out_lines) > 1:
+                    try:
+                        parsed = json.loads(out_lines[1])
+                        if isinstance(parsed, dict):
+                            headers = {
+                                k: v
+                                for k, v in parsed.items()
+                                if isinstance(k, str) and isinstance(v, str) and v
+                            } or None
+                    except ValueError:
+                        pass
+                return url, headers, None
+            last_error = "yt-dlp returned no stream URL"
+            continue
+
         err_text = stderr.decode("utf-8", errors="ignore")
-        return None, _parse_ytdlp_error(err_text)
-    url_lines = stdout.decode("utf-8", errors="ignore").strip().splitlines()
-    if url_lines and url_lines[0].startswith("http"):
-        return url_lines[0], None
-    return None, "yt-dlp returned no stream URL"
+        code, message = _classify_ytdlp_error(err_text)
+        last_error = message
+        if code == "bot_challenge":
+            break
+
+    return None, None, last_error
 
 
 async def get_stream_url(
     server_url: str, video_id: str
-) -> tuple[str | None, str | None, str | None]:
-    """Resolve a direct audio stream URL — race server and local yt-dlp.
+) -> tuple[str | None, str | None, str | None, dict[str, str] | None]:
+    """Resolve a direct audio stream URL — local yt-dlp first, server fallback.
 
-    Returns (stream_url, error_message, source_label).
-    First successful resolver wins; pending task is cancelled.
+    Returns (stream_url, error_message, source_label, headers). headers is
+    only set for local-ytdlp results (see _get_stream_local) and must be
+    forwarded to the player, or some URLs 403 when opened.
+    Local extraction uses the user's residential IP and avoids Render bot walls.
+    Server is only consulted when local yt-dlp is missing or fails.
     """
-    server_task = asyncio.create_task(_get_stream_from_server(server_url, video_id))
-    local_task = asyncio.create_task(_get_stream_local(video_id))
-    pending = {server_task, local_task}
-    server_error: str | None = None
-    server_code: str | None = None
-    local_error: str | None = None
+    stream_url, headers, local_error = await _get_stream_local(video_id)
+    if stream_url:
+        return stream_url, None, "local-ytdlp", headers
 
-    try:
-        while pending:
-            done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in done:
-                if task is server_task:
-                    stream_url, err, code, source = task.result()
-                    if stream_url:
-                        for p in pending:
-                            p.cancel()
-                        if pending:
-                            await asyncio.gather(*pending, return_exceptions=True)
-                        return stream_url, None, source
-                    server_error, server_code = err, code
-                else:
-                    stream_url, err = task.result()
-                    if stream_url:
-                        for p in pending:
-                            p.cancel()
-                        if pending:
-                            await asyncio.gather(*pending, return_exceptions=True)
-                        return stream_url, None, "local-ytdlp"
-                    local_error = err
-    except Exception as exc:
-        for task in (server_task, local_task):
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(server_task, local_task, return_exceptions=True)
-        return None, str(exc), None
+    stream_url, server_error, server_code, source = await _get_stream_from_server(
+        server_url, video_id
+    )
+    if stream_url:
+        return stream_url, None, source, None
 
-    parts = [part for part in (server_error, local_error) if part]
+    parts = [part for part in (local_error, server_error) if part]
     if server_code == "bot_challenge" and not local_error:
         parts.append("install or update local yt-dlp (pip install -U yt-dlp)")
-    return None, " | ".join(parts) if parts else "could not resolve stream", None
+    return None, " | ".join(parts) if parts else "could not resolve stream", None, None
