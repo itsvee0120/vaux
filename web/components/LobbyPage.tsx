@@ -35,6 +35,7 @@ import {
   ListMusic,
   MessageSquare,
   Lock,
+  Share2,
 } from "lucide-react";
 
 type Tab = "player" | "search" | "queue" | "chat";
@@ -389,6 +390,33 @@ export function LobbyPage({
     }
     setCopiedRoom(true);
     setTimeout(() => setCopiedRoom(false), 1500);
+  }
+
+  // Public rooms only — shares a join link with the room name prefilled
+  // (?room=<roomId>, read by LoginPage on load). Private rooms keep their
+  // existing password-bearing invite link via handleCopyRoom above.
+  async function handleShareRoom() {
+    if (typeof window === "undefined") return;
+    const url = `${window.location.origin}/?room=${encodeURIComponent(roomId)}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: "Vaux",
+          text: `Join me on Vaux — room "${roomId}"`,
+          url,
+        });
+      } catch {
+        /* user cancelled the share sheet; ignore */
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedRoom(true);
+      setTimeout(() => setCopiedRoom(false), 1500);
+    } catch {
+      /* clipboard unavailable; nothing more we can do */
+    }
   }
 
   const nowPlaying = playback.videoId
@@ -903,6 +931,23 @@ export function LobbyPage({
             </TooltipTrigger>
             <TooltipContent side="bottom">
               Click to copy room name — share to invite friends
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {!isPrivate && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={handleShareRoom}
+                className="shrink-0 cursor-pointer text-vaux-green-dark transition-colors hover:text-vaux-green"
+                aria-label="Share room link"
+              >
+                <Share2 className="size-3.5" aria-hidden />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              Share a join link with the room prefilled
             </TooltipContent>
           </Tooltip>
         )}
