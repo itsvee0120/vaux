@@ -22,6 +22,7 @@ import sys
 import json
 import time
 import socket
+import tempfile
 import pyperclip
 from importlib.metadata import PackageNotFoundError, version
 from textual.app import App, ComposeResult
@@ -72,6 +73,7 @@ from vaux.playback import PlaybackState
 from vaux.api import search_youtube, SearchResult, get_stream_url, ping_server
 from vaux.mpv import find_mpv
 from vaux.room_slug import generate_room_slug
+from vaux.settings import load_theme, save_theme
 from vaux.crypto import (
     RoomMaterial,
     auth_proof_to_b64,
@@ -120,36 +122,95 @@ def color_for_user(user_id: str) -> str:
     idx = sum(ord(c) for c in user_id) % len(CHAT_COLORS)
     return CHAT_COLORS[idx]
 
+def _build_http_header_fields(headers: dict[str, str]) -> str:
+    """Format headers for mpv's --http-header-fields (a comma-separated
+    String list option, not a repeated flag). Excludes User-Agent, which is
+    sent via the separate --user-agent flag instead.
+
+    A literal comma inside a header VALUE (Accept and Accept-Language both
+    have one in practice) must be backslash-escaped, since mpv's list-option
+    parser splits on unescaped commas. Called with a plain argv list via
+    subprocess.Popen (no shell=True), so no shell-quoting is needed here —
+    only mpv's own list-option escaping.
+    """
+    items = [
+        f"{name}: {value.replace(',', '\\,')}"
+        for name, value in headers.items()
+        if name.lower() != "user-agent"
+    ]
+    return ",".join(items)
+
+
 class MPVPlayer:
     def __init__(self, path: str):
         self.path = path
         self.proc = None
         self.ipc_path = r"\\.\pipe\vaux_mpv_ipc" if sys.platform == "win32" else "/tmp/vaux_mpv_ipc"
+        self._log_path = os.path.join(tempfile.gettempdir(), "vaux_mpv_output.log")
 
-    def play(self, url: str, start: float = 0.0, volume: int = 100):
+    def play(self, url: str, start: float = 0.0, volume: int = 100, headers: dict[str, str] | None = None):
         self.stop()
-        
+
         if sys.platform != "win32" and os.path.exists(self.ipc_path):
             try: os.remove(self.ipc_path)
             except OSError: pass
-        
+
         cmd = [
             self.path,
             "--no-video",
             f"--start={int(start)}",
             f"--volume={volume}",
             f"--input-ipc-server={self.ipc_path}",
-            url,
         ]
-        
+        if headers:
+            # Some yt-dlp player clients (e.g. "web") sign the stream URL to
+            # only accept requests carrying the same User-Agent and other
+            # request headers yt-dlp used to resolve it — without these,
+            # mpv's defaults get a 403 from the CDN. See get_stream_url in
+            # vaux/api.py.
+            user_agent = headers.get("User-Agent")
+            if user_agent:
+                cmd.append(f"--user-agent={user_agent}")
+            field_str = _build_http_header_fields(headers)
+            if field_str:
+                cmd.append(f"--http-header-fields={field_str}")
+        cmd.append(url)
+
+        # mpv writes its load/decode errors to stdout, not stderr — capture
+        # stdout to a temp file (instead of DEVNULL) so a silent crash (e.g.
+        # an expired/throttled stream URL) leaves a trail we can surface in
+        # _check_player_status instead of skipping with no clue.
+        stdout_f = open(self._log_path, "wb")
         kwargs = {
-            "stdout": subprocess.DEVNULL,
+            "stdout": stdout_f,
             "stderr": subprocess.DEVNULL,
         }
         if sys.platform == "win32":
             kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-            
+
         self.proc = subprocess.Popen(cmd, **kwargs)
+        stdout_f.close()
+
+    def read_output_tail(self) -> str:
+        """Last useful line mpv wrote to stdout, for crash diagnostics.
+
+        mpv's actual failure reason (e.g. "[curl] HTTP error 404") is
+        usually followed by a generic "Exiting... (Errors when loading
+        file)" trailer, so prefer the last line that looks like a real
+        error over that trailer.
+        """
+        try:
+            with open(self._log_path, "rb") as f:
+                text = f.read().decode("utf-8", errors="ignore").strip()
+        except OSError:
+            return ""
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        for line in reversed(lines):
+            if any(kw in line for kw in ("ERROR", "Failed to open", "HTTP error")):
+                return line[:300]
+        return lines[-1][:300]
 
     def _send_ipc(self, command: dict) -> None:
         """Sends a JSON-IPC command to the running mpv. Silently fails if mpv
@@ -595,9 +656,9 @@ class LobbyApp(App):
     #copy-btn {
         width: auto;
         min-width: 2;
-        max-width: 4;
+        max-width: 8;
         margin-left: 1;
-        padding: 0;
+        padding: 0 1;
     }
 
     #mode-row {
@@ -707,7 +768,7 @@ class LobbyApp(App):
             with Horizontal(id="slug-row"):
                 yield Label(self._slug, id="slug-display")
                 yield Button("↺ new", id="reroll-btn", variant="default")
-                yield Button("📋", id="copy-btn", variant="default")
+                yield Button("Copy", id="copy-btn", variant="default")
 
             with Horizontal(id="room-input-row"):
                 yield Input(placeholder="room name (e.g. velvet-orbit-42)", id="room-input")
@@ -723,7 +784,13 @@ class LobbyApp(App):
 
         yield Footer()
 
+    def watch_theme(self, theme_name: str) -> None:
+        save_theme(theme_name)
+
     def on_mount(self):
+        saved_theme = load_theme()
+        if saved_theme and saved_theme in self.available_themes:
+            self.theme = saved_theme
         self._apply_mode()
         self._apply_title()
         asyncio.create_task(ping_server(self.server_url))
@@ -787,7 +854,7 @@ class LobbyApp(App):
             room_input_row.display = False
             paste_btn.display  = False
             go_btn.label       = "create & join →"
-            hint.update("Copy the room name to share with others 📋")
+            hint.update("Copy the room name to share with others")
 
         elif self._mode == "join":
             slug_row.display   = False
@@ -807,7 +874,7 @@ class LobbyApp(App):
             room_input_row.display = False
             paste_btn.display  = False
             go_btn.label       = "create private room →"
-            hint.update("Share the code 📋 — chat is end-to-end encrypted")
+            hint.update("Share the code — chat is end-to-end encrypted")
 
         elif self._mode == "private_paste":
             slug_row.display   = False
@@ -1329,7 +1396,7 @@ class VauxApp(App):
         # paused, etc.) from a redundant re-apply after, e.g., a member-join
         # event so we don't issue spurious mpv seeks.
         self._last_applied_updated_at: float = 0.0
-        self.stream_cache: dict[str, str] = {}
+        self.stream_cache: dict[str, tuple[str, dict[str, str] | None]] = {}
         self._stream_preload_tasks: dict[str, asyncio.Task] = {}
         self.volume = 100
         self._volume_before_mute = 100
@@ -1395,7 +1462,13 @@ class VauxApp(App):
         yield Footer()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
+    def watch_theme(self, theme_name: str) -> None:
+        save_theme(theme_name)
+
     async def on_mount(self):
+        saved_theme = load_theme()
+        if saved_theme and saved_theme in self.available_themes:
+            self.theme = saved_theme
         # Private rooms hide the random roomId from the header — it's an
         # opaque base64url string with no value to the user, and showing it
         # could leak shoulder-surfing bits. The 🔒 makes the mode obvious.
@@ -1744,7 +1817,25 @@ class VauxApp(App):
         t.append(text)
         log.write(t)
 
+    _DEBUG_LOG_PATH = os.path.join(tempfile.gettempdir(), "vaux_cli_debug.log")
+
+    def _log_debug(self, text: str) -> None:
+        """Append-only, file-side diagnostic trail — never shown in the TUI.
+
+        Technical detail (which yt-dlp client/headers resolved a stream,
+        mpv's raw crash output) is useful for troubleshooting but means
+        nothing to a listener; it goes here instead of the system log.
+        """
+        try:
+            with open(self._DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%H:%M:%S')} {text}\n")
+        except OSError:
+            pass
+
     def _post_system(self, text: str):
+        # Mirror every system-log line to a plain file too, untruncated.
+        self._log_debug(text)
+
         log = self.query_one("#system-log", RichLog)
         # Truncate over-long messages so a single system event can't wrap to
         # multiple lines and consume too much of the small log area.
@@ -1757,8 +1848,15 @@ class VauxApp(App):
         if not self.is_host or not self.playback.is_playing:
             return
         if self.player and self.player.proc and self.player.proc.poll() is not None:
+            code = self.player.proc.returncode
+            detail = self.player.read_output_tail()
             self.player.proc = None
             self.player_running = False
+            debug_msg = f"mpv exited unexpectedly (code {code})"
+            if detail:
+                debug_msg += f": {detail}"
+            self._log_debug(debug_msg)
+            self._post_system("⚠ stream failed. If this keeps happening, report a bug (Ctrl+B).")
             asyncio.create_task(self._trigger_ended())
 
     def _preload_stream(self, video_id: str) -> None:
@@ -1769,9 +1867,12 @@ class VauxApp(App):
 
         async def _run() -> None:
             try:
-                url, _, _ = await get_stream_url(self.server_url, video_id)
-                if url:
-                    self.stream_cache[video_id] = url
+                url, _, source, headers = await get_stream_url(self.server_url, video_id)
+                # Only cache local-ytdlp URLs for later reuse — server-resolved
+                # URLs are bound to the server's (datacenter) IP and 403 when
+                # played back later from this machine's IP.
+                if url and source == "local-ytdlp":
+                    self.stream_cache[video_id] = (url, headers)
             except Exception:
                 pass
             finally:
@@ -1828,25 +1929,30 @@ class VauxApp(App):
                 # Single concise notice on initial join, emitted before stream
                 self._post_system("♪ syncing…")
 
-            stream_url = self.stream_cache.get(s.video_id)
+            cached = self.stream_cache.get(s.video_id)
             stream_error: str | None = None
             stream_source: str | None = None
-            if not stream_url:
+            headers: dict[str, str] | None = None
+            if cached is None:
                 # Stream resolution is the 5–10s gap that previously made the
                 # CLI feel unresponsive after a play/skip.
                 if announce:
                     self._post_system("⏳ loading stream…")
-                stream_url, stream_error, stream_source = await get_stream_url(
+                stream_url, stream_error, stream_source, headers = await get_stream_url(
                     self.server_url, s.video_id
                 )
-                if stream_url:
-                    self.stream_cache[s.video_id] = stream_url
+                # See _preload_stream: only cache IP-portable (local-ytdlp)
+                # URLs, so a later replay of this track doesn't reuse a
+                # server-resolved URL bound to a different IP.
+                if stream_url and stream_source == "local-ytdlp":
+                    self.stream_cache[s.video_id] = (stream_url, headers)
             else:
+                stream_url, headers = cached
                 stream_source = "memory-cache"
 
             if stream_url:
                 target_pos = s.synced_position()
-                self.player.play(stream_url, start=target_pos, volume=self.volume)
+                self.player.play(stream_url, start=target_pos, volume=self.volume, headers=headers)
                 self.last_video_id = s.video_id
                 self.player_running = True
                 if announce:
@@ -1856,7 +1962,17 @@ class VauxApp(App):
                         "server-live": "server live",
                         "local-ytdlp": "local yt-dlp",
                     }.get(stream_source or "", stream_source or "unknown")
-                    self._post_system(f"⚡ stream source: {source_label}")
+                    # Surfaces which internal yt-dlp player client actually won
+                    # (c= query param) and which headers were forwarded, so a
+                    # later stream failure is self-diagnosing from the debug
+                    # log without needing to re-resolve the URL separately.
+                    # File-only — not something a listener needs to see.
+                    client_match = re.search(r"[?&]c=([A-Za-z0-9_]+)", stream_url)
+                    client = client_match.group(1) if client_match else "?"
+                    header_names = ", ".join(sorted(headers)) if headers else "none"
+                    self._log_debug(
+                        f"stream source: {source_label} (client={client}, headers=[{header_names}])"
+                    )
                 if self.queue:
                     next_video_id = self.queue[0].get("videoId")
                     if isinstance(next_video_id, str):
@@ -1866,8 +1982,9 @@ class VauxApp(App):
                     # "now playing:" label so the title fits on one line.
                     self._post_system(f"▶ {track_label}")
             else:
-                detail = f" {stream_error}" if stream_error else ""
-                self._post_system(f"failed to load stream.{detail}")
+                if stream_error:
+                    self._log_debug(f"stream resolution failed: {stream_error}")
+                self._post_system("⚠ stream failed. If this keeps happening, report a bug (Ctrl+B).")
                 if self.is_host:
                     await self._trigger_ended()
 
