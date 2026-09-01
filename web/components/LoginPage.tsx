@@ -48,6 +48,17 @@ function readFragmentPassword(): string | null {
   return PRIVATE_PASSWORD_RE.test(hash) ? hash : null;
 }
 
+// Read the room id to prefill from a shared join link (?room=<id>), set by
+// LobbyPage's share button. Used as the lazy state initializer for `mode`
+// so an opened room link lands on the join tab immediately.
+function readRoomIdFromQuery(): string | null {
+  if (typeof window === "undefined") return null;
+  const room = new URLSearchParams(window.location.search)
+    .get("room")
+    ?.trim();
+  return room ? room : null;
+}
+
 export function LoginPage({
   roomId,
   username,
@@ -58,9 +69,11 @@ export function LoginPage({
   joinError,
   joining = false,
 }: LoginPageProps) {
-  const [mode, setMode] = useState<"create" | "join" | "private">(() =>
-    readFragmentPassword() ? "private" : "create",
-  );
+  const [mode, setMode] = useState<"create" | "join" | "private">(() => {
+    if (readFragmentPassword()) return "private";
+    if (readRoomIdFromQuery()) return "join";
+    return "create";
+  });
   const [privateSubMode, setPrivateSubMode] = useState<"create" | "paste">(
     () => (readFragmentPassword() ? "paste" : "create"),
   );
@@ -95,6 +108,18 @@ export function LoginPage({
       window.location.pathname + window.location.search,
     );
   }, []);
+
+  // Prefill the room field from a shared join link, then strip the query
+  // param from the address bar (mirrors the hash-stripping effect above).
+  useEffect(() => {
+    const room = readRoomIdFromQuery();
+    if (!room) return;
+    onRoomIdChange(room);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("room");
+    const qs = params.toString();
+    history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, [onRoomIdChange]);
 
   // Lazy-generate the private create-mode password the first time the user
   // lands on that subform. Subsequent clicks of "↺ new" call regen() below.
